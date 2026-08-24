@@ -1,7 +1,7 @@
 # Task Index — Backtest First
 
-- [ ] [TASK-001 — Project Initialization](tasks/TASK-001.md)
-- [ ] [TASK-002 — Core Domain Models](tasks/TASK-002.md)
+- [x] [TASK-001 — Project Initialization](tasks/TASK-001.md)
+- [x] [TASK-002 — Core Domain Models](tasks/TASK-002.md)
 - [ ] [TASK-003 — Historical Market Data Provider](tasks/TASK-003.md)
 - [ ] [TASK-004 — Historical Candle Store & Utilities](tasks/TASK-004.md)
 - [ ] [TASK-005 — Swing Engine](tasks/TASK-005.md)
