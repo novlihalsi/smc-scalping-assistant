@@ -22,6 +22,10 @@ export interface BacktestTrade {
 	exitTimestamp: number;
 	setupScore: number;
 	setupReasons: SetupReason[];
+	exitReason: 'TAKE_PROFIT' | 'STOP_LOSS';
+	intrabarAmbiguous: boolean;
+	feesPaid: number;
+	slippagePaid: number;
 }
 
 export interface BacktestMetrics {

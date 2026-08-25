@@ -153,7 +153,11 @@ const backtestTrade: BacktestTrade = {
 	entryTimestamp: timestamp + 480_000,
 	exitTimestamp: timestamp + 600_000,
 	setupScore: tradingSetup.score,
-	setupReasons: tradingSetup.reasons
+	setupReasons: tradingSetup.reasons,
+	exitReason: 'TAKE_PROFIT',
+	intrabarAmbiguous: false,
+	feesPaid: 0,
+	slippagePaid: 0
 };
 
 const backtestMetrics: BacktestMetrics = {

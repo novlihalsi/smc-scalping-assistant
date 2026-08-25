@@ -1,4 +1,35 @@
-export type { BacktestInput, BacktestMetrics, BacktestTrade } from './backtest/index.js';
+export {
+	analyzeBacktest,
+	BacktestAnalyticsError,
+	BacktestError,
+	buildBreakdowns,
+	buildEquityCurve,
+	calculateBacktestMetrics,
+	DEFAULT_BACKTEST_EXECUTION_CONFIG,
+	generateBacktestValidationReport,
+	runBacktest
+} from './backtest/index.js';
+export type {
+	BacktestAnalytics,
+	BacktestBreakdownBucket,
+	BacktestBreakdowns,
+	BacktestErrorCode,
+	BacktestExecutionConfig,
+	BacktestInput,
+	BacktestMetrics,
+	BacktestRunResult,
+	BacktestTrade,
+	BacktestValidationReport,
+	ClosedCandlePipeline,
+	ClosedCandlePipelineResult,
+	EquityCurvePoint,
+	OpenBacktestTrade,
+	PendingBacktestTrade,
+	RunBacktestOptions,
+	ValidationCheck,
+	ValidationCheckStatus,
+	ValidationVerdict
+} from './backtest/index.js';
 export {
 	aggregateOneMinuteCandlesToFiveMinutes,
 	assertValidCandle,
@@ -96,8 +127,11 @@ export type {
 	SwingPoint
 } from './smc/index.js';
 export {
+	createSmcClosedCandlePipeline,
+	createSmcClosedCandleState,
 	createStrategyState,
 	DEFAULT_SMC_STRATEGY_CONFIG,
+	processSmcClosedCandle,
 	processStrategySignal,
 	StrategyStateError
 } from './strategy/index.js';
@@ -110,6 +144,9 @@ export type {
 	LiquiditySweepSignal,
 	RetracementSignal,
 	SMCStrategyConfig,
+	SMCClosedCandlePipelineState,
+	SMCClosedCandleTimeframeState,
+	SMCSequenceContext,
 	StrategyDirection,
 	StrategyProcessingResult,
 	StrategySignal,
