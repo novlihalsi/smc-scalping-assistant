@@ -7,6 +7,7 @@
 		ArrowDownRight,
 		ArrowUpRight,
 		BarChart3,
+		BookOpen,
 		CheckCircle2,
 		Clock3,
 		Database,
@@ -116,6 +117,8 @@
 			</span>
 		</a>
 		<div class="topbar-status">
+			<a class="journal-link" href={resolve('/history')}><BookOpen size={14} /> Research history</a>
+			<span class="divider"></span>
 			<span class="status-dot"></span>
 			Public market data
 			<span class="divider"></span>
@@ -870,6 +873,16 @@
 		display: flex;
 		gap: 9px;
 		align-items: center;
+	}
+	.journal-link {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		color: #9db2ab;
+		text-decoration: none;
+	}
+	.journal-link:hover {
+		color: #5fe2ba;
 	}
 	.status-dot {
 		width: 7px;

@@ -10,6 +10,8 @@
 		"prepare": "svelte-kit sync || echo ''",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
+		"db:generate": "node scripts/drizzle-kit.cjs generate",
+		"db:migrate": "node scripts/drizzle-kit.cjs migrate",
 		"lint": "prettier --check . && eslint .",
 		"format": "prettier --write .",
 		"test:unit": "vitest",
@@ -23,8 +25,10 @@
 		"@sveltejs/kit": "^2.63.0",
 		"@sveltejs/vite-plugin-svelte": "^7.1.2",
 		"@tailwindcss/vite": "^4.3.0",
+		"@types/better-sqlite3": "^9.6.0",
 		"@types/node": "^24",
 		"clsx": "^2.1.1",
+		"drizzle-kit": "^0.31.10",
 		"eslint": "^10.4.1",
 		"eslint-config-prettier": "^10.1.8",
 		"eslint-plugin-svelte": "^3.19.0",
@@ -43,5 +47,10 @@
 		"typescript-eslint": "^8.60.1",
 		"vite": "^8.0.16",
 		"vitest": "^4.1.8"
+	},
+	"dependencies": {
+		"better-sqlite3": "^13.0.3",
+		"drizzle-orm": "^0.45.2",
+		"lightweight-charts": "^5.2.1"
 	}
 }

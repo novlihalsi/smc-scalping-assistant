@@ -212,6 +212,13 @@ describe('shared closed-candle SMC pipeline', () => {
 			sourceIndex: 2,
 			confirmedTimestamp: 299_999
 		});
+		expect(state.timeframes['1m'].confirmedSwings).toEqual([
+			expect.objectContaining({
+				sourceIndex: 2,
+				confirmedTimestamp: 299_999,
+				type: 'HIGH'
+			})
+		]);
 	});
 
 	it('rejects reverse-time candles before any domain state can be contaminated', () => {

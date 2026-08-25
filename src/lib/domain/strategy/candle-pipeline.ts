@@ -37,7 +37,8 @@ import {
 	type MarketStructureState,
 	type OrderBlock,
 	type OrderBlockState,
-	type StructureBreak
+	type StructureBreak,
+	type SwingPoint
 } from '../smc/index.js';
 import type { SMCStrategyConfig, TradingSetup } from './models.js';
 import {
@@ -52,6 +53,9 @@ type PipelineTimeframe = SMCStrategyConfig['biasTimeframe'] | SMCStrategyConfig[
 export interface SMCClosedCandleTimeframeState {
 	recentCandles: readonly Candle[];
 	processedCandles: number;
+	confirmedSwings: readonly SwingPoint[];
+	structureBreaks: readonly StructureBreak[];
+	liquiditySweeps: readonly LiquiditySweep[];
 	marketStructure: MarketStructureState;
 	liquidity: LiquidityState;
 	atr: AtrState;
@@ -368,6 +372,9 @@ function processTimeframeCandle(
 		state: {
 			recentCandles,
 			processedCandles: state.processedCandles + 1,
+			confirmedSwings: [...state.confirmedSwings, ...confirmedSwings],
+			structureBreaks: [...state.structureBreaks, ...structureBreaks],
+			liquiditySweeps: [...state.liquiditySweeps, ...sweepResult.sweeps],
 			marketStructure,
 			liquidity: sweepResult.state,
 			atr: atrResult.state,
@@ -779,6 +786,9 @@ function createTimeframeState(config: SMCStrategyConfig): SMCClosedCandleTimefra
 	return {
 		recentCandles: [],
 		processedCandles: 0,
+		confirmedSwings: [],
+		structureBreaks: [],
+		liquiditySweeps: [],
 		marketStructure: createMarketStructureState(),
 		liquidity: createLiquidityState(),
 		atr: createAtrState({ period: config.atrPeriod }),

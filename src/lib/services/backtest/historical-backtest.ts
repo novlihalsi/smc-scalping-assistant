@@ -15,6 +15,7 @@ import {
 	type Candle,
 	type ExpiredPendingBacktestTrade,
 	type SMCStrategyConfig,
+	type TradingSetup,
 	type ValidationCostRun
 } from '../../domain/index.js';
 import type { HistoricalMarketDataProvider } from '../historical/index.js';
@@ -45,6 +46,7 @@ export interface HistoricalBacktestReport {
 		preRollTradesExcluded: number;
 	};
 	trades: BacktestTrade[];
+	setups: TradingSetup[];
 	expiredPendingTrades: ExpiredPendingBacktestTrade[];
 	censoredOpenTrades: CensoredOpenBacktestTrade[];
 	analytics: BacktestAnalytics;
@@ -79,6 +81,11 @@ export async function runHistoricalBacktest(
 		executionConfig: request.executionConfig
 	});
 	const analytics = analyzeBacktest(run.trades);
+	const rangeEndTimestamp =
+		input.endDate + getTimeframeDurationMilliseconds(input.config.entryTimeframe) - 1;
+	const inRangeSetups = run.setupEvents.filter(
+		(setup) => setup.updatedAt >= input.startDate && setup.updatedAt <= rangeEndTimestamp
+	);
 	const costRuns = buildCostSensitivityRuns(
 		input,
 		closedOneMinuteCandles,
@@ -102,6 +109,7 @@ export async function runHistoricalBacktest(
 			preRollTradesExcluded: run.preRollTradesExcluded
 		},
 		trades: run.trades,
+		setups: inRangeSetups,
 		expiredPendingTrades: run.expiredPendingTrades,
 		censoredOpenTrades: run.censoredOpenTrades,
 		analytics,

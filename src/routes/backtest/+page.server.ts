@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import { fail } from '@sveltejs/kit';
 
 import {
@@ -11,6 +13,7 @@ import {
 } from '$lib/domain/index.js';
 import { BinanceHistoricalMarketDataProvider } from '$lib/services/exchange/index.js';
 import { runHistoricalBacktest } from '$lib/services/backtest/index.js';
+import { getResearchJournal } from '$lib/server/repositories/index.js';
 
 import type { Actions, PageServerLoad } from './$types.js';
 
@@ -75,7 +78,29 @@ export const actions: Actions = {
 				config,
 				executionConfig: { feeBps: values.feeBps, slippageBps: values.slippageBps }
 			});
-			return { success: true as const, values, report };
+			const runId = randomUUID();
+			getResearchJournal().saveBacktest({
+				id: runId,
+				completedAt: Date.now(),
+				input: report.input,
+				executionConfig: report.executionConfig,
+				data: report.data,
+				metrics: report.analytics.metrics,
+				validation: report.validation,
+				setups: report.setups,
+				trades: report.trades
+			});
+			const displayReport = {
+				input: report.input,
+				executionConfig: report.executionConfig,
+				data: report.data,
+				trades: report.trades,
+				expiredPendingTrades: report.expiredPendingTrades,
+				censoredOpenTrades: report.censoredOpenTrades,
+				analytics: report.analytics,
+				validation: report.validation
+			};
+			return { success: true as const, values, report: displayReport, runId };
 		} catch (error) {
 			return fail(502, {
 				success: false as const,
