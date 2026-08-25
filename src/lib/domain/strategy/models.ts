@@ -2,6 +2,7 @@ import type { EligibilityResult, SetupClassification, SetupReason } from '../sco
 import type { CANONICAL_STRATEGY_TIMEFRAME, DERIVED_BIAS_TIMEFRAME } from '../market/constants.js';
 
 export interface SetupDependencies {
+	sequenceId: string;
 	fvgId: string;
 	orderBlockId: string | null;
 	sweepId: string;

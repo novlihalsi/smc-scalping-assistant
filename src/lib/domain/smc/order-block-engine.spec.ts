@@ -76,6 +76,8 @@ describe('Order Block engine', () => {
 			midpoint: 102,
 			sourceCandleTimestamp: opposite.closeTimestamp,
 			causalStructureBreakId: 'break-1',
+			causalDisplacementId: `d-${confirmation.closeTimestamp}`,
+			causalSequenceId: null,
 			state: 'ACTIVE'
 		});
 	});

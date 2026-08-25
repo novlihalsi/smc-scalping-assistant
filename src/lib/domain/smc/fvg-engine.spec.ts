@@ -37,11 +37,15 @@ describe('FVG engine', () => {
 		expect(beforeConfirmation.gaps).toHaveLength(0);
 		expect(result.createdGap).toMatchObject({
 			type: 'BULLISH',
+			sourceCandleTimestamps: [59_999, 119_999, 179_999],
 			bottom: 105,
 			top: 107,
 			midpoint: 106,
 			state: 'UNTOUCHED',
-			createdAt: third.closeTimestamp
+			createdAt: third.closeTimestamp,
+			causalSequenceId: null,
+			causalStructureBreakId: null,
+			causalDisplacementId: null
 		});
 	});
 

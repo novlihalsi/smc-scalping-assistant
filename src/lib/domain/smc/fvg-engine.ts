@@ -73,16 +73,17 @@ function detectGap(recentCandles: readonly Candle[], third: Candle): FairValueGa
 	}
 
 	const first = recentCandles[recentCandles.length - 2];
-	if (!first) {
+	const second = recentCandles[recentCandles.length - 1];
+	if (!first || !second) {
 		return null;
 	}
 
 	if (third.low > first.high) {
-		return createGap('BULLISH', first.high, third.low, third);
+		return createGap('BULLISH', first.high, third.low, first, second, third);
 	}
 
 	if (third.high < first.low) {
-		return createGap('BEARISH', third.high, first.low, third);
+		return createGap('BEARISH', third.high, first.low, first, second, third);
 	}
 
 	return null;
@@ -92,17 +93,23 @@ function createGap(
 	type: FairValueGap['type'],
 	bottom: number,
 	top: number,
-	candle: Candle
+	first: Candle,
+	second: Candle,
+	third: Candle
 ): FairValueGap {
 	return {
-		id: JSON.stringify(['FVG', candle.symbol, candle.timeframe, candle.closeTimestamp, type]),
+		id: JSON.stringify(['FVG', third.symbol, third.timeframe, third.closeTimestamp, type]),
 		type,
-		createdAt: candle.closeTimestamp,
+		createdAt: third.closeTimestamp,
+		sourceCandleTimestamps: [first.closeTimestamp, second.closeTimestamp, third.closeTimestamp],
 		bottom,
 		top,
 		midpoint: (bottom + top) / 2,
 		state: 'UNTOUCHED',
-		lastUpdatedAt: candle.closeTimestamp
+		lastUpdatedAt: third.closeTimestamp,
+		causalSequenceId: null,
+		causalStructureBreakId: null,
+		causalDisplacementId: null
 	};
 }
 

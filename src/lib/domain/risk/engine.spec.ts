@@ -7,11 +7,15 @@ const fvg: FairValueGap = {
 	id: 'fvg',
 	type: 'BULLISH',
 	createdAt: 10,
+	sourceCandleTimestamps: [8, 9, 10],
 	bottom: 100,
 	top: 104,
 	midpoint: 102,
 	state: 'UNTOUCHED',
-	lastUpdatedAt: 10
+	lastUpdatedAt: 10,
+	causalSequenceId: 'sequence',
+	causalStructureBreakId: 'break',
+	causalDisplacementId: 'displacement'
 };
 const block: OrderBlock = {
 	id: 'ob',
@@ -22,7 +26,9 @@ const block: OrderBlock = {
 	low: 98,
 	midpoint: 100,
 	state: 'ACTIVE',
-	causalStructureBreakId: 'break'
+	causalStructureBreakId: 'break',
+	causalDisplacementId: 'displacement',
+	causalSequenceId: 'sequence'
 };
 const sweep: LiquiditySweep = {
 	id: 'sweep',

@@ -64,11 +64,15 @@ function signals(direction: 'LONG' | 'SHORT'): StrategySignal[] {
 				id: 'fvg',
 				type: marketDirection,
 				createdAt: 5,
+				sourceCandleTimestamps: [3, 4, 5],
 				bottom: 100,
 				top: 102,
 				midpoint: 101,
 				state: 'UNTOUCHED',
-				lastUpdatedAt: 5
+				lastUpdatedAt: 5,
+				causalSequenceId: 'sequence',
+				causalStructureBreakId: 'choch',
+				causalDisplacementId: 'displacement'
 			}
 		},
 		{
@@ -80,11 +84,15 @@ function signals(direction: 'LONG' | 'SHORT'): StrategySignal[] {
 				id: 'fvg',
 				type: marketDirection,
 				createdAt: 5,
+				sourceCandleTimestamps: [3, 4, 5],
 				bottom: 100,
 				top: 102,
 				midpoint: 101,
 				state: 'PARTIALLY_FILLED',
-				lastUpdatedAt: 6
+				lastUpdatedAt: 6,
+				causalSequenceId: 'sequence',
+				causalStructureBreakId: 'choch',
+				causalDisplacementId: 'displacement'
 			},
 			price: 101
 		}

@@ -61,10 +61,10 @@ function createSetupCheckpoint(
 		pipeline = processSmcClosedCandle(pipeline, candle, config).state;
 	}
 	const gapType = direction === 'LONG' ? 'BULLISH' : 'BEARISH';
-	const gap = pipeline.timeframes['1m'].fvg.gaps.find(
+	const rawGap = pipeline.timeframes['1m'].fvg.gaps.find(
 		(candidate) => candidate.type === gapType && candidate.createdAt === source[2]!.closeTimestamp
 	);
-	if (!gap) throw new Error(`Expected ${gapType} FVG fixture.`);
+	if (!rawGap) throw new Error(`Expected ${gapType} FVG fixture.`);
 
 	const bias: 'BULLISH' | 'BEARISH' = direction === 'LONG' ? 'BULLISH' : 'BEARISH';
 	const sweepDirection = direction === 'LONG' ? 'SELL_SIDE' : 'BUY_SIDE';
@@ -95,7 +95,16 @@ function createSetupCheckpoint(
 		direction: sequenceDirection,
 		bodySize: 7,
 		atr: 4,
-		threshold: 4.8
+		threshold: 4.8,
+		causalSequenceId: `${direction}-sequence`,
+		causalStructureBreakId: choch.id
+	};
+	const sequenceId = `${direction}-sequence`;
+	const gap: FairValueGap = {
+		...rawGap,
+		causalSequenceId: sequenceId,
+		causalStructureBreakId: choch.id,
+		causalDisplacementId: displacement.id
 	};
 	const sourceEventIds = ['bias', sweep.id, choch.id, displacement.id, gap.id];
 	const strategy = {
@@ -113,9 +122,18 @@ function createSetupCheckpoint(
 		...pipeline,
 		htfBias: bias,
 		strategy,
-		sequence: { sweep, choch, displacement },
+		sequence: { id: sequenceId, sweep, choch, displacement, fvgId: gap.id },
 		timeframes: {
 			...pipeline.timeframes,
+			'1m': {
+				...pipeline.timeframes['1m'],
+				fvg: {
+					...pipeline.timeframes['1m'].fvg,
+					gaps: pipeline.timeframes['1m'].fvg.gaps.map((candidate) =>
+						candidate.id === gap.id ? gap : candidate
+					)
+				}
+			},
 			'5m': {
 				...pipeline.timeframes['5m'],
 				bos: {

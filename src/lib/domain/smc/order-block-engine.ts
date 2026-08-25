@@ -76,7 +76,7 @@ export function processOrderBlockCandle(
 				: null;
 	const createdBlocks = sourceCandle
 		? eligibleBreaks.map((structureBreak) =>
-				createBlock(displacement!.direction, sourceCandle, candle, structureBreak)
+				createBlock(displacement!, sourceCandle, candle, structureBreak)
 			)
 		: [];
 	const processedStructureBreakIds = [
@@ -100,7 +100,7 @@ export function processOrderBlockCandle(
 }
 
 function createBlock(
-	type: OrderBlock['type'],
+	displacement: DisplacementEvent,
 	source: Candle,
 	confirmation: Candle,
 	structureBreak: StructureBreak
@@ -113,14 +113,16 @@ function createBlock(
 			confirmation.closeTimestamp,
 			structureBreak.id
 		]),
-		type,
+		type: displacement.direction,
 		createdAt: confirmation.closeTimestamp,
 		sourceCandleTimestamp: source.closeTimestamp,
 		high: source.high,
 		low: source.low,
 		midpoint: (source.high + source.low) / 2,
 		state: 'ACTIVE',
-		causalStructureBreakId: structureBreak.id
+		causalStructureBreakId: structureBreak.id,
+		causalDisplacementId: displacement.id,
+		causalSequenceId: null
 	};
 }
 

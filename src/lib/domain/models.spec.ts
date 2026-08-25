@@ -97,11 +97,15 @@ const fairValueGap: FairValueGap = {
 	id: 'fvg-1',
 	type: 'BULLISH',
 	createdAt: timestamp + 360_000,
+	sourceCandleTimestamps: [timestamp + 240_000, timestamp + 300_000, timestamp + 360_000],
 	bottom: 101,
 	top: 102,
 	midpoint: 101.5,
 	state: 'UNTOUCHED',
-	lastUpdatedAt: timestamp + 360_000
+	lastUpdatedAt: timestamp + 360_000,
+	causalSequenceId: 'sequence-1',
+	causalStructureBreakId: structureBreak.id,
+	causalDisplacementId: 'displacement-1'
 };
 
 const orderBlock: OrderBlock = {
@@ -113,7 +117,9 @@ const orderBlock: OrderBlock = {
 	low: 99,
 	midpoint: 100,
 	state: 'ACTIVE',
-	causalStructureBreakId: structureBreak.id
+	causalStructureBreakId: structureBreak.id,
+	causalDisplacementId: 'displacement-1',
+	causalSequenceId: 'sequence-1'
 };
 
 const tradingSetup: TradingSetup = {
@@ -134,6 +140,7 @@ const tradingSetup: TradingSetup = {
 	reasons: [setupReason],
 	sourceEventIds: [liquiditySweep.id, structureBreak.id, fairValueGap.id],
 	dependencies: {
+		sequenceId: 'sequence-1',
 		fvgId: fairValueGap.id,
 		orderBlockId: null,
 		sweepId: liquiditySweep.id,

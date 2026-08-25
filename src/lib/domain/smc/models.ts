@@ -57,11 +57,15 @@ export interface FairValueGap {
 	id: string;
 	type: 'BULLISH' | 'BEARISH';
 	createdAt: number;
+	sourceCandleTimestamps: readonly [number, number, number];
 	bottom: number;
 	top: number;
 	midpoint: number;
 	state: 'UNTOUCHED' | 'PARTIALLY_FILLED' | 'FILLED';
 	lastUpdatedAt: number;
+	causalSequenceId: string | null;
+	causalStructureBreakId: string | null;
+	causalDisplacementId: string | null;
 }
 
 export interface OrderBlock {
@@ -74,4 +78,6 @@ export interface OrderBlock {
 	midpoint: number;
 	state: 'ACTIVE' | 'MITIGATED' | 'INVALIDATED';
 	causalStructureBreakId: string;
+	causalDisplacementId: string;
+	causalSequenceId: string | null;
 }

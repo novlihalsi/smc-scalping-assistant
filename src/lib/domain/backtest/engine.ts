@@ -461,6 +461,7 @@ function validateSetup(setup: TradingSetup, candle: Candle): void {
 			? setup.stopLoss < entry && setup.takeProfit > entry
 			: setup.stopLoss > entry && setup.takeProfit < entry);
 	const validDependencies =
+		Boolean(setup.dependencies.sequenceId) &&
 		Boolean(setup.dependencies.fvgId) &&
 		Boolean(setup.dependencies.sweepId) &&
 		Boolean(setup.dependencies.structureBreakId) &&

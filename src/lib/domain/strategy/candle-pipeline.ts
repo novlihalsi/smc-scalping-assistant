@@ -62,9 +62,16 @@ export interface SMCClosedCandleTimeframeState {
 }
 
 export interface SMCSequenceContext {
+	id: string | null;
 	sweep: LiquiditySweep | null;
 	choch: StructureBreak | null;
-	displacement: DisplacementEvent | null;
+	displacement: CausalDisplacementEvent | null;
+	fvgId: string | null;
+}
+
+export interface CausalDisplacementEvent extends DisplacementEvent {
+	causalSequenceId: string;
+	causalStructureBreakId: string;
 }
 
 export interface SMCClosedCandlePipelineState {
@@ -126,7 +133,7 @@ export function processSmcClosedCandle(
 		candle,
 		config
 	);
-	const timeframes = { ...state.timeframes, [candle.timeframe]: timeframeResult.state };
+	let timeframes = { ...state.timeframes, [candle.timeframe]: timeframeResult.state };
 	let strategy = state.strategy;
 	let sequence = state.sequence;
 	let setupRegistry = state.setupRegistry;
@@ -190,12 +197,14 @@ export function processSmcClosedCandle(
 				timeframeResult.events,
 				candle
 			));
+			const causalEntryState = linkCanonicalSequenceEntities(timeframeResult.state, sequence);
+			timeframes = { ...timeframes, [config.entryTimeframe]: causalEntryState };
 
 			if (strategy.stage === 'WAITING_FOR_RETRACEMENT' && strategy.direction) {
 				const setup = createTradingSetup(
 					strategy,
 					sequence,
-					timeframeResult.state,
+					causalEntryState,
 					timeframes[config.biasTimeframe],
 					htfBias,
 					candle,
@@ -331,33 +340,53 @@ function processEntryEvents(
 			structureBreak: events.choch
 		});
 		strategy = result.state;
-		if (advancedTo(result, 'WAITING_FOR_DISPLACEMENT')) {
-			sequence = { ...sequence, choch: events.choch };
+		if (advancedTo(result, 'WAITING_FOR_DISPLACEMENT') && sequence.sweep) {
+			sequence = {
+				...sequence,
+				id: createSequenceId(candle, sequence.sweep, events.choch),
+				choch: events.choch
+			};
 		}
 	}
 
-	if (stageAtCandleOpen === 'WAITING_FOR_DISPLACEMENT' && events.displacement) {
+	if (
+		stageAtCandleOpen === 'WAITING_FOR_DISPLACEMENT' &&
+		events.displacement &&
+		sequence.id &&
+		sequence.choch
+	) {
+		const causalDisplacement: CausalDisplacementEvent = {
+			...events.displacement,
+			causalSequenceId: sequence.id,
+			causalStructureBreakId: sequence.choch.id
+		};
 		const result = processStrategySignal(strategy, {
 			type: 'DISPLACEMENT',
-			id: events.displacement.id,
+			id: causalDisplacement.id,
 			timestamp: candle.closeTimestamp,
 			timeframe: CANONICAL_STRATEGY_TIMEFRAME,
-			displacement: events.displacement
+			displacement: causalDisplacement
 		});
 		strategy = result.state;
 		if (advancedTo(result, 'WAITING_FOR_FVG')) {
-			sequence = { ...sequence, displacement: events.displacement };
+			sequence = { ...sequence, displacement: causalDisplacement };
 		}
 	}
 
 	if (stageAtCandleOpen === 'WAITING_FOR_FVG' && events.createdFvg) {
-		strategy = processStrategySignal(strategy, {
+		const causalFvg = linkFvgToSequence(events.createdFvg, sequence);
+		if (!causalFvg) return { strategy, sequence };
+		const result = processStrategySignal(strategy, {
 			type: 'FVG',
-			id: events.createdFvg.id,
+			id: causalFvg.id,
 			timestamp: candle.closeTimestamp,
 			timeframe: CANONICAL_STRATEGY_TIMEFRAME,
-			gap: events.createdFvg
-		}).state;
+			gap: causalFvg
+		});
+		strategy = result.state;
+		if (advancedTo(result, 'WAITING_FOR_RETRACEMENT')) {
+			sequence = { ...sequence, fvgId: causalFvg.id };
+		}
 	}
 
 	return { strategy, sequence };
@@ -390,8 +419,25 @@ function createTradingSetup(
 	if (getProtectedStructureInvalidation(strategy.direction, protectedSwing.price, candle.close)) {
 		return null;
 	}
+	if (
+		!sequence.id ||
+		!sequence.choch ||
+		!sequence.displacement ||
+		sequence.fvgId !== fvg.id ||
+		sequence.displacement.causalSequenceId !== sequence.id ||
+		sequence.displacement.causalStructureBreakId !== sequence.choch.id ||
+		fvg.causalSequenceId !== sequence.id ||
+		fvg.causalStructureBreakId !== sequence.choch.id ||
+		fvg.causalDisplacementId !== sequence.displacement.id
+	) {
+		return null;
+	}
 
-	const orderBlock = findRelevantOrderBlock(entryState.orderBlocks.blocks, strategy.direction);
+	const orderBlock = findRelevantOrderBlock(
+		entryState.orderBlocks.blocks,
+		strategy.direction,
+		sequence
+	);
 	let riskPlan: RiskPlan;
 	try {
 		riskPlan = calculateRiskPlan({
@@ -426,7 +472,7 @@ function createTradingSetup(
 		displacement: sequence.displacement.direction === expectedDirection,
 		causalFvg:
 			fvg.type === expectedDirection &&
-			fvg.createdAt >= sequence.displacement.timestamp &&
+			fvg.sourceCandleTimestamps.includes(sequence.displacement.timestamp) &&
 			strategy.sourceEventIds.includes(fvg.id),
 		validEntryGeometry: hasValidEntryGeometry(riskPlan),
 		validRiskReward: riskPlan.riskReward >= config.minimumRiskReward
@@ -470,6 +516,7 @@ function createTradingSetup(
 		reasons: quality.reasons.map((reason) => ({ ...reason })),
 		sourceEventIds: [...strategy.sourceEventIds],
 		dependencies: {
+			sequenceId: sequence.id,
 			fvgId: fvg.id,
 			orderBlockId: riskPlan.entryZoneSource === 'FVG_OB_OVERLAP' ? (orderBlock?.id ?? null) : null,
 			sweepId: sequence.sweep.id,
@@ -612,12 +659,20 @@ function upsertSetup(
 
 function findRelevantOrderBlock(
 	blocks: readonly OrderBlock[],
-	direction: NonNullable<StrategyState['direction']>
+	direction: NonNullable<StrategyState['direction']>,
+	sequence: SMCSequenceContext
 ): OrderBlock | null {
 	const type = direction === 'LONG' ? 'BULLISH' : 'BEARISH';
+	if (!sequence.id || !sequence.displacement) return null;
 	return (
 		[...blocks]
-			.filter((block) => block.type === type && block.state === 'ACTIVE')
+			.filter(
+				(block) =>
+					block.type === type &&
+					block.state === 'ACTIVE' &&
+					block.causalSequenceId === sequence.id &&
+					block.causalDisplacementId === sequence.displacement?.id
+			)
 			.sort(
 				(left, right) => right.createdAt - left.createdAt || right.id.localeCompare(left.id)
 			)[0] ?? null
@@ -655,7 +710,53 @@ function createTimeframeState(config: SMCStrategyConfig): SMCClosedCandleTimefra
 }
 
 function emptySequence(): SMCSequenceContext {
-	return { sweep: null, choch: null, displacement: null };
+	return { id: null, sweep: null, choch: null, displacement: null, fvgId: null };
+}
+
+function createSequenceId(candle: Candle, sweep: LiquiditySweep, choch: StructureBreak): string {
+	return JSON.stringify(['SMC_SEQUENCE', candle.symbol, candle.timeframe, sweep.id, choch.id]);
+}
+
+function linkFvgToSequence(fvg: FairValueGap, sequence: SMCSequenceContext): FairValueGap | null {
+	if (
+		!sequence.id ||
+		!sequence.choch ||
+		!sequence.displacement ||
+		fvg.type !== sequence.displacement.direction ||
+		!fvg.sourceCandleTimestamps.includes(sequence.displacement.timestamp)
+	) {
+		return null;
+	}
+
+	return {
+		...fvg,
+		causalSequenceId: sequence.id,
+		causalStructureBreakId: sequence.choch.id,
+		causalDisplacementId: sequence.displacement.id
+	};
+}
+
+function linkCanonicalSequenceEntities(
+	state: SMCClosedCandleTimeframeState,
+	sequence: SMCSequenceContext
+): SMCClosedCandleTimeframeState {
+	if (!sequence.id || !sequence.displacement) return state;
+
+	const gaps = state.fvg.gaps.map((gap) =>
+		gap.id === sequence.fvgId ? (linkFvgToSequence(gap, sequence) ?? gap) : gap
+	);
+	const blocks = state.orderBlocks.blocks.map((block) =>
+		block.causalDisplacementId === sequence.displacement?.id &&
+		(block.causalSequenceId === null || block.causalSequenceId === sequence.id)
+			? { ...block, causalSequenceId: sequence.id }
+			: block
+	);
+
+	return {
+		...state,
+		fvg: { ...state.fvg, gaps },
+		orderBlocks: { ...state.orderBlocks, blocks }
+	};
 }
 
 function assertPipelineCandle(

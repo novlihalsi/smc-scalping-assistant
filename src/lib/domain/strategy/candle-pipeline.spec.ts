@@ -58,8 +58,15 @@ function stateWaitingForGapRetracement(config = lifecycleConfig): {
 		state = processSmcClosedCandle(state, current, config).state;
 	}
 
-	const gap = state.timeframes['1m'].fvg.gaps[0];
-	if (!gap) throw new Error('Expected bullish FVG fixture.');
+	const rawGap = state.timeframes['1m'].fvg.gaps[0];
+	if (!rawGap) throw new Error('Expected bullish FVG fixture.');
+	const sequenceId = 'active-sequence';
+	const gap: FairValueGap = {
+		...rawGap,
+		causalSequenceId: sequenceId,
+		causalStructureBreakId: 'choch',
+		causalDisplacementId: 'displacement'
+	};
 
 	return {
 		gap,
@@ -67,6 +74,15 @@ function stateWaitingForGapRetracement(config = lifecycleConfig): {
 			...state,
 			timeframes: {
 				...state.timeframes,
+				'1m': {
+					...state.timeframes['1m'],
+					fvg: {
+						...state.timeframes['1m'].fvg,
+						gaps: state.timeframes['1m'].fvg.gaps.map((candidate) =>
+							candidate.id === gap.id ? gap : candidate
+						)
+					}
+				},
 				'5m': {
 					...state.timeframes['5m'],
 					bos: {
@@ -102,6 +118,7 @@ function stateWaitingForGapRetracement(config = lifecycleConfig): {
 				lastProcessedTimestamp: gap.createdAt
 			},
 			sequence: {
+				id: sequenceId,
 				sweep: {
 					id: 'sweep',
 					liquidityId: 'sell-side',
@@ -128,8 +145,11 @@ function stateWaitingForGapRetracement(config = lifecycleConfig): {
 					direction: 'BULLISH',
 					bodySize: 7,
 					atr: 4,
-					threshold: 4.8
-				}
+					threshold: 4.8,
+					causalSequenceId: sequenceId,
+					causalStructureBreakId: 'choch'
+				},
+				fvgId: gap.id
 			}
 		}
 	};
@@ -158,6 +178,7 @@ function withPendingSetup(
 		reasons: [],
 		sourceEventIds: ['bias', 'sweep', 'choch', 'displacement', gap.id],
 		dependencies: {
+			sequenceId: 'active-sequence',
 			fvgId: gap.id,
 			orderBlockId: null,
 			sweepId: 'sweep',
@@ -230,6 +251,7 @@ describe('shared closed-candle SMC pipeline', () => {
 				lastProcessedTimestamp: 59_999
 			},
 			sequence: {
+				id: 'active-sequence',
 				sweep: {
 					id: 'sweep',
 					liquidityId: 'sell-side',
@@ -248,7 +270,8 @@ describe('shared closed-candle SMC pipeline', () => {
 					brokenLevel: 101,
 					closePrice: 102
 				},
-				displacement: null
+				displacement: null,
+				fvgId: null
 			}
 		};
 
@@ -335,6 +358,75 @@ describe('shared closed-candle SMC pipeline', () => {
 		expect(result.state.sequence.displacement).toBeNull();
 	});
 
+	it('does not let a newer FVG formed outside the active displacement window hijack the sequence', () => {
+		let state = createSmcClosedCandleState(lifecycleConfig);
+		for (const current of [
+			oneMinuteCandle(0, { open: 100, high: 101, low: 99, close: 100 }),
+			oneMinuteCandle(1, { open: 100, high: 101, low: 99, close: 100 }),
+			oneMinuteCandle(2, { open: 100, high: 101, low: 99, close: 100 })
+		]) {
+			state = processSmcClosedCandle(state, current, lifecycleConfig).state;
+		}
+		state = {
+			...state,
+			htfBias: 'BULLISH',
+			strategy: {
+				...createStrategyState(),
+				stage: 'WAITING_FOR_FVG',
+				direction: 'LONG',
+				bias: 'BULLISH',
+				sourceEventIds: ['bias', 'sweep', 'choch', 'displacement'],
+				processedEventIds: ['bias', 'sweep', 'choch', 'displacement'],
+				startedAt: 0,
+				lastProcessedTimestamp: 179_999
+			},
+			sequence: {
+				id: 'active-sequence',
+				sweep: {
+					id: 'sweep',
+					liquidityId: 'sell-side',
+					timestamp: 59_999,
+					direction: 'SELL_SIDE',
+					liquidityPrice: 99,
+					extremePrice: 98,
+					closePrice: 100
+				},
+				choch: {
+					id: 'choch',
+					timestamp: 59_999,
+					direction: 'BULLISH',
+					type: 'CHOCH',
+					brokenSwingId: 'lh',
+					brokenLevel: 100,
+					closePrice: 101
+				},
+				displacement: {
+					id: 'displacement',
+					symbol: 'BTCUSDT',
+					timeframe: '1m',
+					timestamp: 59_999,
+					direction: 'BULLISH',
+					bodySize: 3,
+					atr: 2,
+					threshold: 2.4,
+					causalSequenceId: 'active-sequence',
+					causalStructureBreakId: 'choch'
+				},
+				fvgId: null
+			}
+		};
+
+		const result = processSmcClosedCandle(
+			state,
+			oneMinuteCandle(3, { open: 102, high: 104, low: 102, close: 103 }),
+			lifecycleConfig
+		);
+
+		expect(result.state.strategy.stage).toBe('WAITING_FOR_FVG');
+		expect(result.state.strategy.activeFvgId).toBeNull();
+		expect(result.setups).toEqual([]);
+	});
+
 	it('emits a VALID setup before touch, then triggers it on the first entry boundary touch', () => {
 		const { state, gap } = stateWaitingForGapRetracement();
 		const valid = processSmcClosedCandle(
@@ -356,6 +448,7 @@ describe('shared closed-candle SMC pipeline', () => {
 			entryPrice: gap.top,
 			pendingEntryBars: 0,
 			dependencies: {
+				sequenceId: 'active-sequence',
 				fvgId: gap.id,
 				protectedSwingId: 'protected-hl',
 				protectedSwingPrice: 100,
@@ -377,6 +470,134 @@ describe('shared closed-candle SMC pipeline', () => {
 			triggeredAt: 299_999
 		});
 		expect(triggered.state.activeSetupId).toBeNull();
+	});
+
+	it('ignores older and newer same-direction FVGs outside the active sequence', () => {
+		const fixture = stateWaitingForGapRetracement();
+		const setupCandle = oneMinuteCandle(3, { open: 110, high: 111, low: 108, close: 109 });
+		const baseline = processSmcClosedCandle(fixture.state, setupCandle, lifecycleConfig).setups[0];
+		const unrelatedGaps: FairValueGap[] = [
+			{
+				...fixture.gap,
+				id: 'older-unrelated-fvg',
+				createdAt: 119_999,
+				lastUpdatedAt: 119_999,
+				sourceCandleTimestamps: [0, 59_999, 119_999],
+				bottom: 80,
+				top: 81,
+				midpoint: 80.5,
+				causalSequenceId: 'older-sequence',
+				causalStructureBreakId: 'older-choch',
+				causalDisplacementId: 'older-displacement'
+			},
+			{
+				...fixture.gap,
+				id: 'newer-unrelated-fvg',
+				createdAt: 200_000,
+				lastUpdatedAt: 200_000,
+				sourceCandleTimestamps: [120_000, 160_000, 200_000],
+				bottom: 82,
+				top: 83,
+				midpoint: 82.5,
+				causalSequenceId: 'newer-sequence',
+				causalStructureBreakId: 'newer-choch',
+				causalDisplacementId: 'newer-displacement'
+			}
+		];
+		const adversarialState: SMCClosedCandlePipelineState = {
+			...fixture.state,
+			timeframes: {
+				...fixture.state.timeframes,
+				'1m': {
+					...fixture.state.timeframes['1m'],
+					fvg: {
+						...fixture.state.timeframes['1m'].fvg,
+						gaps: [unrelatedGaps[0]!, fixture.gap, unrelatedGaps[1]!]
+					}
+				}
+			}
+		};
+		const adversarial = processSmcClosedCandle(adversarialState, setupCandle, lifecycleConfig)
+			.setups[0];
+
+		expect(adversarial).toMatchObject({
+			entryZone: baseline?.entryZone,
+			entryPrice: baseline?.entryPrice,
+			eligibility: baseline?.eligibility,
+			score: baseline?.score,
+			reasons: baseline?.reasons,
+			dependencies: baseline?.dependencies
+		});
+	});
+
+	it('ignores a newer unrelated OB and selects only confluence from the active sequence', () => {
+		const fixture = stateWaitingForGapRetracement();
+		const setupCandle = oneMinuteCandle(3, { open: 110, high: 111, low: 108, close: 109 });
+		const causalBlock: OrderBlock = {
+			id: 'causal-ob',
+			type: 'BULLISH',
+			createdAt: 190_000,
+			sourceCandleTimestamp: 119_999,
+			high: 106.5,
+			low: 105.5,
+			midpoint: 106,
+			state: 'ACTIVE',
+			causalStructureBreakId: 'bos-on-displacement',
+			causalDisplacementId: 'displacement',
+			causalSequenceId: 'active-sequence'
+		};
+		const unrelatedBlock: OrderBlock = {
+			...causalBlock,
+			id: 'newer-unrelated-ob',
+			createdAt: 200_000,
+			high: 107,
+			low: 106.8,
+			midpoint: 106.9,
+			causalStructureBreakId: 'unrelated-bos',
+			causalDisplacementId: 'unrelated-displacement',
+			causalSequenceId: 'unrelated-sequence'
+		};
+		const withBlocks = (blocks: readonly OrderBlock[]): SMCClosedCandlePipelineState => ({
+			...fixture.state,
+			timeframes: {
+				...fixture.state.timeframes,
+				'1m': {
+					...fixture.state.timeframes['1m'],
+					orderBlocks: { ...fixture.state.timeframes['1m'].orderBlocks, blocks }
+				}
+			}
+		});
+		const baseline = processSmcClosedCandle(withBlocks([]), setupCandle, lifecycleConfig).setups[0];
+		const unrelatedOnly = processSmcClosedCandle(
+			withBlocks([unrelatedBlock]),
+			setupCandle,
+			lifecycleConfig
+		).setups[0];
+		const causal = processSmcClosedCandle(withBlocks([causalBlock]), setupCandle, lifecycleConfig)
+			.setups[0];
+		const adversarial = processSmcClosedCandle(
+			withBlocks([causalBlock, unrelatedBlock]),
+			setupCandle,
+			lifecycleConfig
+		).setups[0];
+
+		expect(unrelatedOnly).toMatchObject({
+			entryZone: baseline?.entryZone,
+			entryPrice: baseline?.entryPrice,
+			eligibility: baseline?.eligibility,
+			score: baseline?.score,
+			reasons: baseline?.reasons,
+			dependencies: baseline?.dependencies
+		});
+		expect(causal?.dependencies.orderBlockId).toBe(causalBlock.id);
+		expect(adversarial).toMatchObject({
+			entryZone: causal?.entryZone,
+			entryPrice: causal?.entryPrice,
+			eligibility: causal?.eligibility,
+			score: causal?.score,
+			reasons: causal?.reasons,
+			dependencies: causal?.dependencies
+		});
 	});
 
 	it('emits no setup when a mandatory eligibility rule fails', () => {
@@ -564,6 +785,7 @@ describe('shared closed-candle SMC pipeline', () => {
 			stopLoss: 125,
 			takeProfit: 90,
 			dependencies: {
+				sequenceId: 'active-sequence',
 				fvgId: fixture.gap.id,
 				orderBlockId: null,
 				sweepId: 'sweep',
@@ -596,12 +818,15 @@ describe('shared closed-candle SMC pipeline', () => {
 			low: 106,
 			midpoint: 107.5,
 			state: 'ACTIVE',
-			causalStructureBreakId: 'choch'
+			causalStructureBreakId: 'choch',
+			causalDisplacementId: 'displacement',
+			causalSequenceId: 'active-sequence'
 		};
 		let state = withPendingSetup(fixture.state, fixture.gap, {
 			entryZone: { min: 106, max: 107 },
 			entryPrice: 107,
 			dependencies: {
+				sequenceId: 'active-sequence',
 				fvgId: fixture.gap.id,
 				orderBlockId: block.id,
 				sweepId: 'sweep',

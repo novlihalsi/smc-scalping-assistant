@@ -61,6 +61,7 @@ function setup(timestamp: number, overrides: Partial<TradingSetup> = {}): Tradin
 		})),
 		sourceEventIds: ['event-1'],
 		dependencies: {
+			sequenceId: 'sequence-1',
 			fvgId: 'fvg-1',
 			orderBlockId: null,
 			sweepId: 'sweep-1',
