@@ -257,6 +257,16 @@
 									value={values.stopLossATRBuffer}
 								/>
 							</label>
+							<label>
+								<span>Max pending bars</span>
+								<input
+									name="maxPendingEntryBars"
+									type="number"
+									min="1"
+									max="10000"
+									value={values.maxPendingEntryBars}
+								/>
+							</label>
 						</div>
 					</fieldset>
 

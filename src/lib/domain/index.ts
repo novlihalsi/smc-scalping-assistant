@@ -127,15 +127,21 @@ export type {
 	SwingPoint
 } from './smc/index.js';
 export {
+	CanonicalMinutePipelineError,
+	createCanonicalMinutePipeline,
+	createCanonicalMinutePipelineState,
 	createSmcClosedCandlePipeline,
 	createSmcClosedCandleState,
 	createStrategyState,
 	DEFAULT_SMC_STRATEGY_CONFIG,
+	processCanonicalMinute,
 	processSmcClosedCandle,
 	processStrategySignal,
 	StrategyStateError
 } from './strategy/index.js';
 export type {
+	CanonicalMinutePipelineState,
+	CanonicalMinuteProcessingResult,
 	ChochSignal,
 	DisplacementSignal,
 	FvgSignal,
@@ -143,6 +149,7 @@ export type {
 	InvalidationSignal,
 	LiquiditySweepSignal,
 	RetracementSignal,
+	SetupDependencies,
 	SMCStrategyConfig,
 	SMCClosedCandlePipelineState,
 	SMCClosedCandleTimeframeState,

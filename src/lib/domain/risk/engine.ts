@@ -56,7 +56,7 @@ const FALLBACK_RISK_REWARD = 2;
 export function calculateRiskPlan(input: RiskCalculationInput): RiskPlan {
 	validateInput(input);
 	const { entryZone, source } = selectEntryZone(input);
-	const entryPrice = (entryZone.min + entryZone.max) / 2;
+	const entryPrice = input.direction === 'LONG' ? entryZone.max : entryZone.min;
 	const stopLoss =
 		input.direction === 'LONG'
 			? input.sweep.extremePrice - input.atr * input.config.stopLossATRBuffer

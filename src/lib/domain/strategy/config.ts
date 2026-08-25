@@ -10,5 +10,6 @@ export const DEFAULT_SMC_STRATEGY_CONFIG: SMCStrategyConfig = {
 	displacementATRMultiplier: 1.2,
 	minimumScore: 75,
 	minimumRiskReward: 1.5,
-	stopLossATRBuffer: 0.1
+	stopLossATRBuffer: 0.1,
+	maxPendingEntryBars: 10
 };

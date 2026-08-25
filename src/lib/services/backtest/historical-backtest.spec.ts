@@ -12,38 +12,23 @@ class FixtureProvider implements HistoricalMarketDataProvider {
 
 	async getCandles(request: HistoricalCandlesRequest): Promise<Candle[]> {
 		this.requests.push(request);
-		const duration = request.timeframe === '1m' ? 60_000 : 300_000;
-		return [
-			{
-				symbol: request.symbol,
-				timeframe: request.timeframe,
-				openTimestamp: 0,
-				closeTimestamp: duration - 1,
-				open: 100,
-				high: 105,
-				low: 95,
-				close: 101,
-				volume: 10,
-				closed: true
-			},
-			{
-				symbol: request.symbol,
-				timeframe: request.timeframe,
-				openTimestamp: duration,
-				closeTimestamp: duration * 2 - 1,
-				open: 101,
-				high: 106,
-				low: 96,
-				close: 102,
-				volume: 10,
-				closed: false
-			}
-		];
+		return Array.from({ length: 6 }, (_, minute) => ({
+			symbol: request.symbol,
+			timeframe: request.timeframe,
+			openTimestamp: minute * 60_000,
+			closeTimestamp: minute * 60_000 + 59_999,
+			open: 100,
+			high: 105,
+			low: 95,
+			close: 101,
+			volume: 10,
+			closed: minute < 5
+		}));
 	}
 }
 
 describe('historical backtest service', () => {
-	it('fetches both configured timeframes and reports only closed-candle replay results', async () => {
+	it('fetches only canonical 1m data and reports derived 5m replay results', async () => {
 		const provider = new FixtureProvider();
 		const report = await runHistoricalBacktest(provider, {
 			symbol: 'BTCUSDT',
@@ -53,11 +38,11 @@ describe('historical backtest service', () => {
 			executionConfig: { feeBps: 4, slippageBps: 2 }
 		});
 
-		expect(provider.requests.map(({ timeframe }) => timeframe).sort()).toEqual(['1m', '5m']);
+		expect(provider.requests.map(({ timeframe }) => timeframe)).toEqual(['1m']);
 		expect(report.data).toEqual({
-			oneMinuteCandles: 1,
+			oneMinuteCandles: 5,
 			fiveMinuteCandles: 1,
-			processedCandles: 2,
+			processedCandles: 6,
 			pendingTrades: 0,
 			openTrades: 0
 		});

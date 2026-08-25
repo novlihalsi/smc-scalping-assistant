@@ -21,6 +21,7 @@ interface BacktestFormValues {
 	minimumScore: number;
 	minimumRiskReward: number;
 	stopLossATRBuffer: number;
+	maxPendingEntryBars: number;
 	feeBps: number;
 	slippageBps: number;
 }
@@ -54,7 +55,8 @@ export const actions: Actions = {
 			displacementATRMultiplier: values.displacementATRMultiplier,
 			minimumScore: values.minimumScore,
 			minimumRiskReward: values.minimumRiskReward,
-			stopLossATRBuffer: values.stopLossATRBuffer
+			stopLossATRBuffer: values.stopLossATRBuffer,
+			maxPendingEntryBars: values.maxPendingEntryBars
 		};
 
 		try {
@@ -92,6 +94,7 @@ function parseFormValues(formData: FormData): BacktestFormValues {
 		minimumScore: requiredNumber(formData, 'minimumScore'),
 		minimumRiskReward: requiredNumber(formData, 'minimumRiskReward'),
 		stopLossATRBuffer: requiredNumber(formData, 'stopLossATRBuffer'),
+		maxPendingEntryBars: requiredNumber(formData, 'maxPendingEntryBars'),
 		feeBps: requiredNumber(formData, 'feeBps'),
 		slippageBps: requiredNumber(formData, 'slippageBps')
 	};
@@ -116,6 +119,7 @@ function validateFormValues(values: BacktestFormValues, now: number): void {
 	assertIntegerRange(values.minimumScore, 0, 100, 'Minimum score');
 	assertNumberRange(values.minimumRiskReward, 0.01, 20, 'Minimum risk/reward');
 	assertNumberRange(values.stopLossATRBuffer, 0, 5, 'Stop-loss ATR buffer');
+	assertIntegerRange(values.maxPendingEntryBars, 1, 10_000, 'Maximum pending entry bars');
 	assertNumberRange(values.feeBps, 0, 9_999.99, 'Fee');
 	assertNumberRange(values.slippageBps, 0, 9_999.99, 'Slippage');
 }
@@ -134,6 +138,7 @@ function defaultFormValues(now: number): BacktestFormValues {
 		minimumScore: DEFAULT_SMC_STRATEGY_CONFIG.minimumScore,
 		minimumRiskReward: DEFAULT_SMC_STRATEGY_CONFIG.minimumRiskReward,
 		stopLossATRBuffer: DEFAULT_SMC_STRATEGY_CONFIG.stopLossATRBuffer,
+		maxPendingEntryBars: DEFAULT_SMC_STRATEGY_CONFIG.maxPendingEntryBars,
 		feeBps: 0,
 		slippageBps: 0
 	};

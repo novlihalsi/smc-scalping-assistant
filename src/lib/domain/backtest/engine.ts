@@ -49,6 +49,7 @@ export interface OpenBacktestTrade extends PendingBacktestTrade {
 
 export interface BacktestRunResult<State> {
 	trades: BacktestTrade[];
+	setupEvents: TradingSetup[];
 	pendingTrades: PendingBacktestTrade[];
 	openTrades: OpenBacktestTrade[];
 	finalState: State;
@@ -115,18 +116,11 @@ export function runBacktest<State>(options: RunBacktestOptions<State>): Backtest
 	const openTrades = new Map<string, OpenTradeState>();
 	const closedSetupIds = new Set<string>();
 	const trades: BacktestTrade[] = [];
+	const setupEvents: TradingSetup[] = [];
 
 	for (const candle of candles) {
 		if (candle.timeframe === options.input.config.entryTimeframe) {
 			processExistingOpenTrades(candle, openTrades, closedSetupIds, trades, executionConfig);
-			processPendingTrades(
-				candle,
-				pendingTrades,
-				openTrades,
-				closedSetupIds,
-				trades,
-				executionConfig
-			);
 		}
 
 		const processingResult = options.pipeline.processClosedCandle(
@@ -137,16 +131,38 @@ export function runBacktest<State>(options: RunBacktestOptions<State>): Backtest
 		validatePipelineResult(processingResult);
 		domainState = processingResult.state;
 		processedCandles += 1;
+		setupEvents.push(...processingResult.setups.map(cloneSetup));
 		reconcileSetups(processingResult.setups, candle, pendingTrades, openTrades, closedSetupIds);
+		if (candle.timeframe === options.input.config.entryTimeframe) {
+			processPendingTrades(
+				candle,
+				pendingTrades,
+				openTrades,
+				closedSetupIds,
+				trades,
+				executionConfig
+			);
+		}
 	}
 
 	return {
 		trades,
+		setupEvents,
 		pendingTrades: [...pendingTrades.values()].map(toPendingTrade),
 		openTrades: [...openTrades.values()].map(toOpenTrade),
 		finalState: domainState,
 		processedCandles,
 		executionConfig: { ...executionConfig }
+	};
+}
+
+function cloneSetup(setup: TradingSetup): TradingSetup {
+	return {
+		...setup,
+		entryZone: { ...setup.entryZone },
+		reasons: setup.reasons.map((reason) => ({ ...reason })),
+		sourceEventIds: [...setup.sourceEventIds],
+		dependencies: { ...setup.dependencies }
 	};
 }
 
@@ -342,13 +358,14 @@ function reconcileSetups(
 			continue;
 		}
 
+		const existingPending = pendingTrades.get(setup.id);
 		pendingTrades.set(setup.id, {
 			setupId: setup.id,
 			direction: setup.direction,
-			entry: (setup.entryZone.min + setup.entryZone.max) / 2,
+			entry: setup.entryPrice,
 			stopLoss: setup.stopLoss,
 			takeProfit: setup.takeProfit,
-			queuedAt: candle.closeTimestamp,
+			queuedAt: existingPending?.queuedAt ?? candle.closeTimestamp,
 			setupScore: setup.score,
 			setupReasons: setup.reasons.map((reason) => ({ ...reason }))
 		});
@@ -365,16 +382,19 @@ function validateSetup(setup: TradingSetup, candle: Candle): void {
 	if (setup.symbol !== candle.symbol) {
 		throw new BacktestError('INVALID_SETUP', `Setup ${setup.id} has a mismatched symbol.`);
 	}
-	const entry = (setup.entryZone.min + setup.entryZone.max) / 2;
+	const entry = setup.entryPrice;
 	const validNumbers = [
 		setup.createdAt,
 		setup.updatedAt,
 		setup.entryZone.min,
 		setup.entryZone.max,
+		setup.entryPrice,
 		setup.stopLoss,
 		setup.takeProfit,
 		setup.riskReward,
-		setup.score
+		setup.score,
+		setup.pendingEntryBars,
+		setup.triggeredAt ?? 0
 	].every(Number.isFinite);
 	const validGeometry =
 		Number.isSafeInteger(setup.createdAt) &&
@@ -382,10 +402,23 @@ function validateSetup(setup: TradingSetup, candle: Candle): void {
 		Number.isSafeInteger(setup.updatedAt) &&
 		setup.updatedAt >= setup.createdAt &&
 		setup.entryZone.min <= setup.entryZone.max &&
+		entry >= setup.entryZone.min &&
+		entry <= setup.entryZone.max &&
+		Number.isSafeInteger(setup.pendingEntryBars) &&
+		setup.pendingEntryBars >= 0 &&
+		(setup.triggeredAt === undefined ||
+			(Number.isSafeInteger(setup.triggeredAt) &&
+				setup.triggeredAt >= setup.createdAt &&
+				setup.triggeredAt <= candle.closeTimestamp)) &&
 		(setup.direction === 'LONG'
 			? setup.stopLoss < entry && setup.takeProfit > entry
 			: setup.stopLoss > entry && setup.takeProfit < entry);
-	if (!setup.id || !validNumbers || !validGeometry) {
+	const validDependencies =
+		Boolean(setup.dependencies.fvgId) &&
+		Boolean(setup.dependencies.sweepId) &&
+		Boolean(setup.dependencies.structureBreakId) &&
+		Boolean(setup.dependencies.displacementId);
+	if (!setup.id || !validNumbers || !validGeometry || !validDependencies) {
 		throw new BacktestError('INVALID_SETUP', `Setup ${setup.id} has invalid trade geometry.`);
 	}
 }

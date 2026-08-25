@@ -65,7 +65,7 @@ function longInput(overrides: Partial<RiskCalculationInput> = {}): RiskCalculati
 		orderBlock: block,
 		sweep,
 		atr: 10,
-		liquidityLevels: [liquidity('near', 'BUY_SIDE', 112), liquidity('far', 'BUY_SIDE', 120)],
+		liquidityLevels: [liquidity('near', 'BUY_SIDE', 113), liquidity('far', 'BUY_SIDE', 120)],
 		config,
 		...overrides
 	};
@@ -77,15 +77,15 @@ describe('risk engine', () => {
 		expect(plan).toMatchObject({
 			entryZone: { min: 100, max: 102 },
 			entryZoneSource: 'FVG_OB_OVERLAP',
-			entryPrice: 101,
+			entryPrice: 102,
 			stopLoss: 95,
-			takeProfit: 112,
-			riskReward: 11 / 6,
+			takeProfit: 113,
+			riskReward: 11 / 7,
 			riskAmount: 100,
 			targetSource: 'LIQUIDITY',
 			targetLiquidityId: 'near'
 		});
-		expect(plan.positionSize).toBeCloseTo(100 / 6, 12);
+		expect(plan.positionSize).toBeCloseTo(100 / 7, 12);
 	});
 
 	it('uses the FVG alone when no valid overlap exists', () => {
@@ -109,9 +109,9 @@ describe('risk engine', () => {
 		});
 		expect(shortPlan).toMatchObject({
 			entryZone: { min: 98, max: 100 },
-			entryPrice: 99,
+			entryPrice: 98,
 			stopLoss: 105,
-			takeProfit: 87,
+			takeProfit: 84,
 			riskReward: 2,
 			targetSource: 'FALLBACK_2R'
 		});

@@ -100,6 +100,14 @@ export interface SetupReason {
 	description: string;
 }
 
+export interface SetupDependencies {
+	fvgId: string;
+	orderBlockId: string | null;
+	sweepId: string;
+	structureBreakId: string;
+	displacementId: string;
+}
+
 export interface TradingSetup {
 	id: string;
 	symbol: string;
@@ -110,11 +118,15 @@ export interface TradingSetup {
 	score: number;
 	classification: 'NO_TRADE' | 'WEAK' | 'VALID' | 'STRONG';
 	entryZone: { min: number; max: number };
+	entryPrice: number;
 	stopLoss: number;
 	takeProfit: number;
 	riskReward: number;
 	reasons: SetupReason[];
 	sourceEventIds: string[];
+	dependencies: SetupDependencies;
+	pendingEntryBars: number;
+	triggeredAt?: number;
 	invalidationReason?: string;
 }
 
@@ -129,6 +141,7 @@ export interface SMCStrategyConfig {
 	minimumScore: number;
 	minimumRiskReward: number;
 	stopLossATRBuffer: number;
+	maxPendingEntryBars: number;
 }
 
 export const DEFAULT_SMC_STRATEGY_CONFIG: SMCStrategyConfig = {
@@ -141,7 +154,8 @@ export const DEFAULT_SMC_STRATEGY_CONFIG: SMCStrategyConfig = {
 	displacementATRMultiplier: 1.2,
 	minimumScore: 75,
 	minimumRiskReward: 1.5,
-	stopLossATRBuffer: 0.1
+	stopLossATRBuffer: 0.1,
+	maxPendingEntryBars: 10
 };
 ```
 

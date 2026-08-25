@@ -126,11 +126,20 @@ const tradingSetup: TradingSetup = {
 	score: 75,
 	classification: 'VALID',
 	entryZone: { min: fairValueGap.bottom, max: fairValueGap.top },
+	entryPrice: fairValueGap.top,
 	stopLoss: 98,
 	takeProfit: 108,
 	riskReward: 2,
 	reasons: [setupReason],
-	sourceEventIds: [liquiditySweep.id, structureBreak.id, fairValueGap.id]
+	sourceEventIds: [liquiditySweep.id, structureBreak.id, fairValueGap.id],
+	dependencies: {
+		fvgId: fairValueGap.id,
+		orderBlockId: null,
+		sweepId: liquiditySweep.id,
+		structureBreakId: structureBreak.id,
+		displacementId: 'displacement-1'
+	},
+	pendingEntryBars: 0
 };
 
 const backtestInput: BacktestInput = {
@@ -210,7 +219,8 @@ describe('core domain models', () => {
 			displacementATRMultiplier: 1.2,
 			minimumScore: 75,
 			minimumRiskReward: 1.5,
-			stopLossATRBuffer: 0.1
+			stopLossATRBuffer: 0.1,
+			maxPendingEntryBars: 10
 		});
 	});
 });

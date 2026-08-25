@@ -2,7 +2,11 @@ import { describe, expect, it } from 'vitest';
 
 import type { Candle, Timeframe } from '../market/index.js';
 import { detectConfirmedSwings } from '../smc/index.js';
-import { DEFAULT_SMC_STRATEGY_CONFIG, type TradingSetup } from '../strategy/index.js';
+import {
+	createCanonicalMinutePipeline,
+	DEFAULT_SMC_STRATEGY_CONFIG,
+	type TradingSetup
+} from '../strategy/index.js';
 import {
 	BacktestError,
 	runBacktest,
@@ -42,6 +46,7 @@ function setup(timestamp: number, overrides: Partial<TradingSetup> = {}): Tradin
 		score: 80,
 		classification: 'VALID',
 		entryZone: { min: 99, max: 101 },
+		entryPrice: 100,
 		stopLoss: 90,
 		takeProfit: 110,
 		riskReward: 1,
@@ -55,6 +60,14 @@ function setup(timestamp: number, overrides: Partial<TradingSetup> = {}): Tradin
 			}
 		],
 		sourceEventIds: ['event-1'],
+		dependencies: {
+			fvgId: 'fvg-1',
+			orderBlockId: null,
+			sweepId: 'sweep-1',
+			structureBreakId: 'choch-1',
+			displacementId: 'displacement-1'
+		},
+		pendingEntryBars: 0,
 		...overrides
 	};
 }
@@ -227,9 +240,9 @@ describe('backtesting engine', () => {
 		expect(trade.intrabarAmbiguous).toBe(true);
 	});
 
-	it('cancels an invalidated pending setup before a later entry touch', () => {
+	it('reconciles invalidation before a same-candle touch and prevents a zombie fill', () => {
 		const first = candle(0, '1m', { open: 103, high: 105, low: 102, close: 104 });
-		const invalidation = candle(60_000, '1m', { open: 104, high: 106, low: 102, close: 103 });
+		const invalidation = candle(60_000, '1m', { open: 104, high: 106, low: 99, close: 103 });
 		const laterTouch = candle(120_000, '1m', { open: 103, high: 104, low: 99, close: 101 });
 		const pipeline: ClosedCandlePipeline<number> = {
 			createInitialState: () => 0,
@@ -280,5 +293,34 @@ describe('backtesting engine', () => {
 		const options = baseOptions(source, pipeline);
 
 		expect(runBacktest(options)).toEqual(runBacktest(options));
+	});
+
+	it('produces identical canonical state, events, and trades from reversed raw 1m delivery', () => {
+		const source = Array.from({ length: 10 }, (_, minute) =>
+			candle(minute * 60_000, '1m', {
+				open: 100 + minute,
+				high: 102 + minute,
+				low: 99 + minute,
+				close: 101 + minute
+			})
+		);
+		const forward = runBacktest(
+			baseOptions(source, createCanonicalMinutePipeline(DEFAULT_SMC_STRATEGY_CONFIG))
+		);
+		const reversed = runBacktest(
+			baseOptions([...source].reverse(), createCanonicalMinutePipeline(DEFAULT_SMC_STRATEGY_CONFIG))
+		);
+
+		expect({
+			state: reversed.finalState,
+			setupEvents: reversed.setupEvents,
+			trades: reversed.trades
+		}).toEqual({
+			state: forward.finalState,
+			setupEvents: forward.setupEvents,
+			trades: forward.trades
+		});
+		expect(forward.finalState.pipeline.processedCandles).toBe(12);
+		expect(forward.finalState.derivedFiveMinuteCandles).toBe(2);
 	});
 });

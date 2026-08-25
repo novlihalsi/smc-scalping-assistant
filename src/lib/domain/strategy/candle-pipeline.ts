@@ -40,7 +40,6 @@ import {
 	createStrategyState,
 	processStrategySignal,
 	type StrategyProcessingResult,
-	type StrategySignal,
 	type StrategyState
 } from './state-machine.js';
 
@@ -68,6 +67,9 @@ export interface SMCClosedCandlePipelineState {
 	timeframes: Record<PipelineTimeframe, SMCClosedCandleTimeframeState>;
 	strategy: StrategyState;
 	sequence: SMCSequenceContext;
+	setupRegistry: readonly TradingSetup[];
+	activeSetupId: string | null;
+	maxPendingEntryBars: number;
 	htfBias: MarketBias;
 	processedCandles: number;
 	lastProcessedTimestamp: number | null;
@@ -103,6 +105,7 @@ export function createSmcClosedCandlePipeline(config: SMCStrategyConfig) {
 export function createSmcClosedCandleState(
 	config: SMCStrategyConfig
 ): SMCClosedCandlePipelineState {
+	assertPendingEntryConfig(config);
 	return {
 		timeframes: {
 			'1m': createTimeframeState(config),
@@ -110,6 +113,9 @@ export function createSmcClosedCandleState(
 		},
 		strategy: createStrategyState(),
 		sequence: emptySequence(),
+		setupRegistry: [],
+		activeSetupId: null,
+		maxPendingEntryBars: config.maxPendingEntryBars,
 		htfBias: 'NEUTRAL',
 		processedCandles: 0,
 		lastProcessedTimestamp: null
@@ -130,6 +136,8 @@ export function processSmcClosedCandle(
 	const timeframes = { ...state.timeframes, [candle.timeframe]: timeframeResult.state };
 	let strategy = state.strategy;
 	let sequence = state.sequence;
+	let setupRegistry = state.setupRegistry;
+	let activeSetupId = state.activeSetupId;
 	let htfBias = state.htfBias;
 	const setups: TradingSetup[] = [];
 
@@ -144,25 +152,55 @@ export function processSmcClosedCandle(
 		});
 		strategy = biasResult.state;
 		if (biasResult.transition) sequence = emptySequence();
-	} else {
-		({ strategy, sequence } = processEntryEvents(
-			strategy,
-			sequence,
-			timeframeResult.events,
-			candle
-		));
 
-		const retracement = createRetracementSignal(strategy, candle);
-		if (retracement) {
-			const retracementResult = processStrategySignal(strategy, retracement);
-			strategy = retracementResult.state;
+		const activeSetup = resolveSetup(setupRegistry, activeSetupId);
+		if (activeSetup && !isBiasAligned(activeSetup, htfBias)) {
+			const invalidated = invalidateSetup(activeSetup, candle.closeTimestamp, 'HTF_BIAS_REVERSED');
+			setupRegistry = upsertSetup(setupRegistry, invalidated);
+			activeSetupId = null;
+			setups.push(invalidated);
 		}
+	} else {
+		const activeSetup = resolveSetup(setupRegistry, activeSetupId);
+		if (activeSetup) {
+			const lifecycle = processPendingSetup(
+				activeSetup,
+				timeframeResult.state,
+				htfBias,
+				candle,
+				config
+			);
+			setupRegistry = upsertSetup(setupRegistry, lifecycle.setup);
+			if (lifecycle.event) setups.push(lifecycle.event);
+			if (lifecycle.setup.status !== 'VALID') {
+				activeSetupId = null;
+				strategy = restartStrategy(htfBias, candle);
+				sequence = emptySequence();
+			}
+		} else {
+			({ strategy, sequence } = processEntryEvents(
+				strategy,
+				sequence,
+				timeframeResult.events,
+				candle
+			));
 
-		if (strategy.stage === 'READY' && strategy.direction) {
-			const setup = createTradingSetup(strategy, sequence, timeframeResult.state, candle, config);
-			if (setup) setups.push(setup);
-			strategy = restartStrategy(htfBias, candle);
-			sequence = emptySequence();
+			if (strategy.stage === 'WAITING_FOR_RETRACEMENT' && strategy.direction) {
+				const setup = createTradingSetup(strategy, sequence, timeframeResult.state, candle, config);
+				if (setup) {
+					setupRegistry = upsertSetup(setupRegistry, setup);
+					setups.push(setup);
+					if (setup.status === 'VALID') {
+						activeSetupId = setup.id;
+					} else {
+						strategy = restartStrategy(htfBias, candle);
+						sequence = emptySequence();
+					}
+				} else {
+					strategy = restartStrategy(htfBias, candle);
+					sequence = emptySequence();
+				}
+			}
 		}
 	}
 
@@ -171,6 +209,9 @@ export function processSmcClosedCandle(
 			timeframes,
 			strategy,
 			sequence,
+			setupRegistry,
+			activeSetupId,
+			maxPendingEntryBars: state.maxPendingEntryBars,
 			htfBias,
 			processedCandles: state.processedCandles + 1,
 			lastProcessedTimestamp: candle.closeTimestamp
@@ -306,32 +347,6 @@ function processEntryEvents(
 	return { strategy, sequence };
 }
 
-function createRetracementSignal(
-	strategy: StrategyState,
-	candle: Candle
-): Extract<StrategySignal, { type: 'RETRACEMENT' }> | null {
-	const gap = strategy.activeFvg;
-	if (
-		strategy.stage !== 'WAITING_FOR_RETRACEMENT' ||
-		!gap ||
-		gap.createdAt >= candle.closeTimestamp ||
-		candle.low > gap.top ||
-		candle.high < gap.bottom
-	) {
-		return null;
-	}
-	const overlapBottom = Math.max(candle.low, gap.bottom);
-	const overlapTop = Math.min(candle.high, gap.top);
-	return {
-		type: 'RETRACEMENT',
-		id: JSON.stringify(['RETRACEMENT', candle.symbol, candle.closeTimestamp, gap.id]),
-		timestamp: candle.closeTimestamp,
-		timeframe: '1m',
-		fvgId: gap.id,
-		price: (overlapBottom + overlapTop) / 2
-	};
-}
-
 function createTradingSetup(
 	strategy: StrategyState,
 	sequence: SMCSequenceContext,
@@ -339,9 +354,10 @@ function createTradingSetup(
 	candle: Candle,
 	config: SMCStrategyConfig
 ): TradingSetup | null {
+	const fvg = resolveFvg(entryState.fvg.gaps, strategy.activeFvgId);
 	if (
 		!strategy.direction ||
-		!strategy.activeFvg ||
+		!fvg ||
 		!sequence.sweep ||
 		!sequence.choch ||
 		!sequence.displacement ||
@@ -355,7 +371,7 @@ function createTradingSetup(
 		riskPlan = calculateRiskPlan({
 			direction: strategy.direction,
 			evaluationTimestamp: candle.closeTimestamp,
-			fvg: strategy.activeFvg,
+			fvg,
 			orderBlock,
 			sweep: sequence.sweep,
 			atr: entryState.atr.atr,
@@ -410,12 +426,105 @@ function createTradingSetup(
 		score: score.score,
 		classification: score.classification,
 		entryZone: riskPlan.entryZone,
+		entryPrice: riskPlan.entryPrice,
 		stopLoss: riskPlan.stopLoss,
 		takeProfit: riskPlan.takeProfit,
 		riskReward: riskPlan.riskReward,
 		reasons: score.reasons.map((reason) => ({ ...reason })),
-		sourceEventIds: [...strategy.sourceEventIds]
+		sourceEventIds: [...strategy.sourceEventIds],
+		dependencies: {
+			fvgId: fvg.id,
+			orderBlockId: riskPlan.entryZoneSource === 'FVG_OB_OVERLAP' ? (orderBlock?.id ?? null) : null,
+			sweepId: sequence.sweep.id,
+			structureBreakId: sequence.choch.id,
+			displacementId: sequence.displacement.id
+		},
+		pendingEntryBars: 0
 	};
+}
+
+function processPendingSetup(
+	setup: TradingSetup,
+	entryState: SMCClosedCandleTimeframeState,
+	htfBias: MarketBias,
+	candle: Candle,
+	config: SMCStrategyConfig
+): { setup: TradingSetup; event: TradingSetup | null } {
+	if (!isBiasAligned(setup, htfBias)) {
+		const invalidated = invalidateSetup(setup, candle.closeTimestamp, 'HTF_BIAS_REVERSED');
+		return { setup: invalidated, event: invalidated };
+	}
+
+	const fvg = resolveFvg(entryState.fvg.gaps, setup.dependencies.fvgId);
+	if (!fvg || fvg.state === 'FILLED') {
+		const invalidated = invalidateSetup(setup, candle.closeTimestamp, 'DEPENDENT_FVG_FILLED');
+		return { setup: invalidated, event: invalidated };
+	}
+
+	if (setup.dependencies.orderBlockId) {
+		const orderBlock = entryState.orderBlocks.blocks.find(
+			({ id }) => id === setup.dependencies.orderBlockId
+		);
+		if (!orderBlock || orderBlock.state === 'INVALIDATED') {
+			const invalidated = invalidateSetup(
+				setup,
+				candle.closeTimestamp,
+				'DEPENDENT_ORDER_BLOCK_INVALIDATED'
+			);
+			return { setup: invalidated, event: invalidated };
+		}
+	}
+
+	if (setup.pendingEntryBars >= config.maxPendingEntryBars) {
+		const invalidated = invalidateSetup(setup, candle.closeTimestamp, 'PENDING_EXPIRED');
+		return { setup: invalidated, event: invalidated };
+	}
+
+	const pending = {
+		...setup,
+		updatedAt: candle.closeTimestamp,
+		pendingEntryBars: setup.pendingEntryBars + 1
+	};
+	if (candle.low <= setup.entryPrice && candle.high >= setup.entryPrice) {
+		const triggered: TradingSetup = {
+			...pending,
+			status: 'TRIGGERED',
+			triggeredAt: candle.closeTimestamp
+		};
+		return { setup: triggered, event: triggered };
+	}
+
+	return { setup: pending, event: null };
+}
+
+function invalidateSetup(setup: TradingSetup, timestamp: number, reason: string): TradingSetup {
+	return { ...setup, status: 'INVALIDATED', updatedAt: timestamp, invalidationReason: reason };
+}
+
+function isBiasAligned(setup: TradingSetup, bias: MarketBias): boolean {
+	return (
+		(setup.direction === 'LONG' && bias === 'BULLISH') ||
+		(setup.direction === 'SHORT' && bias === 'BEARISH')
+	);
+}
+
+function resolveFvg(gaps: readonly FairValueGap[], id: string | null): FairValueGap | null {
+	if (id === null) return null;
+	return gaps.find((gap) => gap.id === id) ?? null;
+}
+
+function resolveSetup(registry: readonly TradingSetup[], id: string | null): TradingSetup | null {
+	if (id === null) return null;
+	return registry.find((setup) => setup.id === id) ?? null;
+}
+
+function upsertSetup(
+	registry: readonly TradingSetup[],
+	setup: TradingSetup
+): readonly TradingSetup[] {
+	const existingIndex = registry.findIndex(({ id }) => id === setup.id);
+	if (existingIndex < 0) return [...registry, setup];
+	return registry.map((existing, index) => (index === existingIndex ? setup : existing));
 }
 
 function findRelevantOrderBlock(
@@ -471,10 +580,14 @@ function assertPipelineCandle(
 	candle: Candle,
 	config: SMCStrategyConfig
 ): asserts candle is Candle & { timeframe: PipelineTimeframe } {
+	assertPendingEntryConfig(config);
 	if (candle.timeframe !== config.biasTimeframe && candle.timeframe !== config.entryTimeframe) {
 		throw new RangeError(`SMC pipeline does not support ${candle.timeframe} candles.`);
 	}
 	if (state.timeframes[candle.timeframe].atr.period !== config.atrPeriod) {
+		throw new RangeError('SMC pipeline configuration cannot change during replay.');
+	}
+	if (state.maxPendingEntryBars !== config.maxPendingEntryBars) {
 		throw new RangeError('SMC pipeline configuration cannot change during replay.');
 	}
 	if (
@@ -482,5 +595,11 @@ function assertPipelineCandle(
 		candle.closeTimestamp < state.lastProcessedTimestamp
 	) {
 		throw new RangeError('SMC pipeline candles must be processed by non-decreasing close time.');
+	}
+}
+
+function assertPendingEntryConfig(config: SMCStrategyConfig): void {
+	if (!Number.isSafeInteger(config.maxPendingEntryBars) || config.maxPendingEntryBars < 1) {
+		throw new RangeError('maxPendingEntryBars must be a positive safe integer.');
 	}
 }

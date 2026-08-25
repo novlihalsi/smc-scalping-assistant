@@ -1,6 +1,6 @@
 import {
 	analyzeBacktest,
-	createSmcClosedCandlePipeline,
+	createCanonicalMinutePipeline,
 	generateBacktestValidationReport,
 	runBacktest,
 	type BacktestAnalytics,
@@ -39,22 +39,13 @@ export async function runHistoricalBacktest(
 	provider: HistoricalMarketDataProvider,
 	request: HistoricalBacktestRequest
 ): Promise<HistoricalBacktestReport> {
-	const [oneMinuteCandles, fiveMinuteCandles] = await Promise.all([
-		provider.getCandles({
-			symbol: request.symbol,
-			timeframe: request.config.entryTimeframe,
-			startTimestamp: request.startTimestamp,
-			endTimestamp: request.endTimestamp
-		}),
-		provider.getCandles({
-			symbol: request.symbol,
-			timeframe: request.config.biasTimeframe,
-			startTimestamp: request.startTimestamp,
-			endTimestamp: request.endTimestamp
-		})
-	]);
+	const oneMinuteCandles = await provider.getCandles({
+		symbol: request.symbol,
+		timeframe: request.config.entryTimeframe,
+		startTimestamp: request.startTimestamp,
+		endTimestamp: request.endTimestamp
+	});
 	const closedOneMinuteCandles = oneMinuteCandles.filter(({ closed }) => closed);
-	const closedFiveMinuteCandles = fiveMinuteCandles.filter(({ closed }) => closed);
 	const input: BacktestInput = {
 		symbol: request.symbol,
 		startDate: request.startTimestamp,
@@ -63,8 +54,8 @@ export async function runHistoricalBacktest(
 	};
 	const run = runBacktest({
 		input,
-		candles: [...closedOneMinuteCandles, ...closedFiveMinuteCandles],
-		pipeline: createSmcClosedCandlePipeline(request.config),
+		candles: closedOneMinuteCandles,
+		pipeline: createCanonicalMinutePipeline(request.config),
 		executionConfig: request.executionConfig
 	});
 	const analytics = analyzeBacktest(run.trades);
@@ -74,8 +65,8 @@ export async function runHistoricalBacktest(
 		executionConfig: { ...request.executionConfig },
 		data: {
 			oneMinuteCandles: closedOneMinuteCandles.length,
-			fiveMinuteCandles: closedFiveMinuteCandles.length,
-			processedCandles: run.processedCandles,
+			fiveMinuteCandles: run.finalState.derivedFiveMinuteCandles,
+			processedCandles: run.finalState.pipeline.processedCandles,
 			pendingTrades: run.pendingTrades.length,
 			openTrades: run.openTrades.length
 		},

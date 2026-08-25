@@ -52,7 +52,7 @@ export interface FvgSignal extends BaseStrategySignal {
 export interface RetracementSignal extends BaseStrategySignal {
 	type: 'RETRACEMENT';
 	timeframe: '1m';
-	fvgId: string;
+	fvg: FairValueGap;
 	price: number;
 }
 
@@ -74,7 +74,7 @@ export interface StrategyState {
 	stage: StrategyStage;
 	direction: StrategyDirection | null;
 	bias: MarketBias;
-	activeFvg: FairValueGap | null;
+	activeFvgId: string | null;
 	sourceEventIds: readonly string[];
 	processedEventIds: readonly string[];
 	startedAt: number | null;
@@ -109,7 +109,7 @@ export function createStrategyState(): StrategyState {
 		stage: 'WAITING_FOR_BIAS',
 		direction: null,
 		bias: 'NEUTRAL',
-		activeFvg: null,
+		activeFvgId: null,
 		sourceEventIds: [],
 		processedEventIds: [],
 		startedAt: null,
@@ -169,16 +169,19 @@ export function processStrategySignal(
 			signal.gap.lastUpdatedAt === signal.timestamp
 		) {
 			const next = transition(baseState, signal, 'WAITING_FOR_RETRACEMENT');
-			return { ...next, state: { ...next.state, activeFvg: signal.gap } };
+			return { ...next, state: { ...next.state, activeFvgId: signal.gap.id } };
 		}
 	}
 
 	if (signal.type === 'RETRACEMENT' && state.stage === 'WAITING_FOR_RETRACEMENT') {
 		if (
-			state.activeFvg?.id === signal.fvgId &&
+			state.activeFvgId === signal.fvg.id &&
+			signal.fvg.state !== 'FILLED' &&
+			signal.fvg.createdAt < signal.timestamp &&
+			signal.fvg.lastUpdatedAt <= signal.timestamp &&
 			Number.isFinite(signal.price) &&
-			signal.price >= state.activeFvg.bottom &&
-			signal.price <= state.activeFvg.top
+			signal.price >= signal.fvg.bottom &&
+			signal.price <= signal.fvg.top
 		) {
 			return transition(baseState, signal, 'READY');
 		}
@@ -205,7 +208,7 @@ function processBias(state: StrategyState, signal: HtfBiasSignal): StrategyProce
 		stage: 'WAITING_FOR_SWEEP',
 		direction,
 		bias: signal.bias,
-		activeFvg: null,
+		activeFvgId: null,
 		sourceEventIds: [signal.id],
 		startedAt: signal.timestamp,
 		invalidationReason: null

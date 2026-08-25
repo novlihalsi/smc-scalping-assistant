@@ -76,7 +76,16 @@ function signals(direction: 'LONG' | 'SHORT'): StrategySignal[] {
 			id: 'retracement',
 			timestamp: 6,
 			timeframe: '1m',
-			fvgId: 'fvg',
+			fvg: {
+				id: 'fvg',
+				type: marketDirection,
+				createdAt: 5,
+				bottom: 100,
+				top: 102,
+				midpoint: 101,
+				state: 'PARTIALLY_FILLED',
+				lastUpdatedAt: 6
+			},
 			price: 101
 		}
 	];
@@ -108,6 +117,23 @@ describe('SMC strategy state machine', () => {
 			'retracement'
 		]);
 		expect(transitions.every(Boolean)).toBe(true);
+	});
+
+	it('keeps only FVG provenance and rejects a retracement against its latest FILLED state', () => {
+		const source = signals('LONG');
+		const waiting = replay(source.slice(0, 5));
+		const retracement = source[5] as Extract<StrategySignal, { type: 'RETRACEMENT' }>;
+
+		expect(waiting.activeFvgId).toBe('fvg');
+		expect(waiting).not.toHaveProperty('activeFvg');
+
+		const result = processStrategySignal(waiting, {
+			...retracement,
+			fvg: { ...retracement.fvg, state: 'FILLED' }
+		});
+
+		expect(result.state.stage).toBe('WAITING_FOR_RETRACEMENT');
+		expect(result.transition).toBeNull();
 	});
 
 	it('does not advance on an out-of-order sequence event', () => {

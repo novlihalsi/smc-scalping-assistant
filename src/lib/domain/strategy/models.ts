@@ -1,5 +1,13 @@
 import type { SetupReason } from '../scoring/index.js';
 
+export interface SetupDependencies {
+	fvgId: string;
+	orderBlockId: string | null;
+	sweepId: string;
+	structureBreakId: string;
+	displacementId: string;
+}
+
 export interface TradingSetup {
 	id: string;
 	symbol: string;
@@ -10,11 +18,15 @@ export interface TradingSetup {
 	score: number;
 	classification: 'NO_TRADE' | 'WEAK' | 'VALID' | 'STRONG';
 	entryZone: { min: number; max: number };
+	entryPrice: number;
 	stopLoss: number;
 	takeProfit: number;
 	riskReward: number;
 	reasons: SetupReason[];
 	sourceEventIds: string[];
+	dependencies: SetupDependencies;
+	pendingEntryBars: number;
+	triggeredAt?: number;
 	invalidationReason?: string;
 }
 
@@ -29,4 +41,5 @@ export interface SMCStrategyConfig {
 	minimumScore: number;
 	minimumRiskReward: number;
 	stopLossATRBuffer: number;
+	maxPendingEntryBars: number;
 }
