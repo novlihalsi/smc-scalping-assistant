@@ -32,7 +32,7 @@ function requestUrl(input: string | URL | Request): URL {
 }
 
 describe('BinanceHistoricalMarketDataProvider', () => {
-	it('paginates, normalizes, deduplicates, and sorts 1m candles', async () => {
+	it('paginates, normalizes, and sorts 1m candles', async () => {
 		const fetchMock = vi.fn<typeof fetch>();
 
 		fetchMock.mockImplementation(async (input) => {
@@ -43,11 +43,9 @@ describe('BinanceHistoricalMarketDataProvider', () => {
 					return jsonResponse([kline(60_000, 119_999), kline(0, 59_999)]);
 				case 120_000:
 					return jsonResponse([
-						kline(120_000, 179_999, '101.00'),
-						kline(120_000, 179_999, '101.50')
+						kline(120_000, 179_999, '101.50'),
+						kline(180_000, 239_999, '101.00')
 					]);
-				case 180_000:
-					return jsonResponse([kline(180_000, 239_999)]);
 				default:
 					return jsonResponse([]);
 			}
@@ -84,13 +82,31 @@ describe('BinanceHistoricalMarketDataProvider', () => {
 		expect(candles[3]?.closed).toBe(false);
 
 		const urls = fetchMock.mock.calls.map(([input]) => requestUrl(input));
-		expect(urls.map((url) => url.searchParams.get('startTime'))).toEqual(['0', '120000', '180000']);
+		expect(urls.map((url) => url.searchParams.get('startTime'))).toEqual(['0', '120000']);
 		expect(urls[0]?.origin).toBe('https://data-api.binance.vision');
 		expect(urls[0]?.pathname).toBe('/api/v3/klines');
 		expect(urls[0]?.searchParams.get('symbol')).toBe('BTCUSDT');
 		expect(urls[0]?.searchParams.get('interval')).toBe('1m');
 		expect(urls[0]?.searchParams.get('endTime')).toBe('180000');
 		expect(urls[0]?.searchParams.get('limit')).toBe('2');
+	});
+
+	it('rejects duplicate normalized candles explicitly', async () => {
+		const provider = new BinanceHistoricalMarketDataProvider({
+			fetch: vi
+				.fn<typeof fetch>()
+				.mockResolvedValue(jsonResponse([kline(0, 59_999, '101.00'), kline(0, 59_999, '101.50')])),
+			now: () => 120_000
+		});
+
+		await expect(
+			provider.getCandles({
+				symbol: 'BTCUSDT',
+				timeframe: '1m',
+				startTimestamp: 0,
+				endTimestamp: 60_000
+			})
+		).rejects.toMatchObject({ code: 'DUPLICATE_CANDLE' });
 	});
 
 	it('supports normalized 5m candles', async () => {

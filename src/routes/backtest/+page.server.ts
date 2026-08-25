@@ -1,13 +1,19 @@
 import { fail } from '@sveltejs/kit';
 
-import { DEFAULT_SMC_STRATEGY_CONFIG, type SMCStrategyConfig } from '$lib/domain/index.js';
+import {
+	CANONICAL_STRATEGY_TIMEFRAME,
+	DEFAULT_SMC_STRATEGY_CONFIG,
+	DERIVED_BIAS_TIMEFRAME,
+	MILLISECONDS_PER_DAY,
+	PRIMARY_MARKET_SYMBOL,
+	TIMEFRAME_DURATION_MILLISECONDS,
+	type SMCStrategyConfig
+} from '$lib/domain/index.js';
 import { BinanceHistoricalMarketDataProvider } from '$lib/services/exchange/index.js';
 import { runHistoricalBacktest } from '$lib/services/backtest/index.js';
 
 import type { Actions, PageServerLoad } from './$types.js';
 
-const DAY_MILLISECONDS = 86_400_000;
-const ONE_MINUTE_MILLISECONDS = 60_000;
 const MAX_RANGE_DAYS = 31;
 
 interface BacktestFormValues {
@@ -18,7 +24,6 @@ interface BacktestFormValues {
 	liquidityTolerancePercent: number;
 	atrPeriod: number;
 	displacementATRMultiplier: number;
-	minimumScore: number;
 	minimumRiskReward: number;
 	stopLossATRBuffer: number;
 	maxPendingEntryBars: number;
@@ -44,16 +49,18 @@ export const actions: Actions = {
 		}
 
 		const startTimestamp = parseUtcDate(values.startDate);
-		const endTimestamp = parseUtcDate(values.endDate) + DAY_MILLISECONDS - ONE_MINUTE_MILLISECONDS;
+		const endTimestamp =
+			parseUtcDate(values.endDate) +
+			MILLISECONDS_PER_DAY -
+			TIMEFRAME_DURATION_MILLISECONDS[CANONICAL_STRATEGY_TIMEFRAME];
 		const config: SMCStrategyConfig = {
-			biasTimeframe: '5m',
-			entryTimeframe: '1m',
+			biasTimeframe: DERIVED_BIAS_TIMEFRAME,
+			entryTimeframe: CANONICAL_STRATEGY_TIMEFRAME,
 			swingLeftBars: values.swingLeftBars,
 			swingRightBars: values.swingRightBars,
 			liquidityTolerancePercent: values.liquidityTolerancePercent,
 			atrPeriod: values.atrPeriod,
 			displacementATRMultiplier: values.displacementATRMultiplier,
-			minimumScore: values.minimumScore,
 			minimumRiskReward: values.minimumRiskReward,
 			stopLossATRBuffer: values.stopLossATRBuffer,
 			maxPendingEntryBars: values.maxPendingEntryBars
@@ -62,7 +69,7 @@ export const actions: Actions = {
 		try {
 			const provider = new BinanceHistoricalMarketDataProvider({ fetch });
 			const report = await runHistoricalBacktest(provider, {
-				symbol: 'BTCUSDT',
+				symbol: PRIMARY_MARKET_SYMBOL,
 				startTimestamp,
 				endTimestamp,
 				config,
@@ -91,7 +98,6 @@ function parseFormValues(formData: FormData): BacktestFormValues {
 		liquidityTolerancePercent: requiredNumber(formData, 'liquidityTolerancePercent'),
 		atrPeriod: requiredNumber(formData, 'atrPeriod'),
 		displacementATRMultiplier: requiredNumber(formData, 'displacementATRMultiplier'),
-		minimumScore: requiredNumber(formData, 'minimumScore'),
 		minimumRiskReward: requiredNumber(formData, 'minimumRiskReward'),
 		stopLossATRBuffer: requiredNumber(formData, 'stopLossATRBuffer'),
 		maxPendingEntryBars: requiredNumber(formData, 'maxPendingEntryBars'),
@@ -107,7 +113,7 @@ function validateFormValues(values: BacktestFormValues, now: number): void {
 	if (startTimestamp > endDateTimestamp)
 		throw new RangeError('Start date must not exceed end date.');
 	if (endDateTimestamp >= todayUtc) throw new RangeError('End date must be a completed UTC day.');
-	const inclusiveDays = (endDateTimestamp - startTimestamp) / DAY_MILLISECONDS + 1;
+	const inclusiveDays = (endDateTimestamp - startTimestamp) / MILLISECONDS_PER_DAY + 1;
 	if (inclusiveDays > MAX_RANGE_DAYS) {
 		throw new RangeError(`Date range is limited to ${MAX_RANGE_DAYS} days per run.`);
 	}
@@ -116,7 +122,6 @@ function validateFormValues(values: BacktestFormValues, now: number): void {
 	assertNumberRange(values.liquidityTolerancePercent, 0, 5, 'Liquidity tolerance');
 	assertIntegerRange(values.atrPeriod, 1, 200, 'ATR period');
 	assertNumberRange(values.displacementATRMultiplier, 0.01, 10, 'Displacement multiplier');
-	assertIntegerRange(values.minimumScore, 0, 100, 'Minimum score');
 	assertNumberRange(values.minimumRiskReward, 0.01, 20, 'Minimum risk/reward');
 	assertNumberRange(values.stopLossATRBuffer, 0, 5, 'Stop-loss ATR buffer');
 	assertIntegerRange(values.maxPendingEntryBars, 1, 10_000, 'Maximum pending entry bars');
@@ -125,8 +130,8 @@ function validateFormValues(values: BacktestFormValues, now: number): void {
 }
 
 function defaultFormValues(now: number): BacktestFormValues {
-	const yesterday = startOfUtcDay(now) - DAY_MILLISECONDS;
-	const start = yesterday - 6 * DAY_MILLISECONDS;
+	const yesterday = startOfUtcDay(now) - MILLISECONDS_PER_DAY;
+	const start = yesterday - 6 * MILLISECONDS_PER_DAY;
 	return {
 		startDate: formatUtcDate(start),
 		endDate: formatUtcDate(yesterday),
@@ -135,7 +140,6 @@ function defaultFormValues(now: number): BacktestFormValues {
 		liquidityTolerancePercent: DEFAULT_SMC_STRATEGY_CONFIG.liquidityTolerancePercent,
 		atrPeriod: DEFAULT_SMC_STRATEGY_CONFIG.atrPeriod,
 		displacementATRMultiplier: DEFAULT_SMC_STRATEGY_CONFIG.displacementATRMultiplier,
-		minimumScore: DEFAULT_SMC_STRATEGY_CONFIG.minimumScore,
 		minimumRiskReward: DEFAULT_SMC_STRATEGY_CONFIG.minimumRiskReward,
 		stopLossATRBuffer: DEFAULT_SMC_STRATEGY_CONFIG.stopLossATRBuffer,
 		maxPendingEntryBars: DEFAULT_SMC_STRATEGY_CONFIG.maxPendingEntryBars,

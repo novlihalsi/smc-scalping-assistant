@@ -4,7 +4,7 @@ import type { Candle } from '../market/index.js';
 import type { FairValueGap, OrderBlock } from '../smc/index.js';
 import { DEFAULT_SMC_STRATEGY_CONFIG } from './config.js';
 import {
-	createSmcClosedCandlePipeline,
+	createSmcClosedCandleState,
 	processSmcClosedCandle,
 	type SMCClosedCandlePipelineState
 } from './candle-pipeline.js';
@@ -49,7 +49,7 @@ function stateWaitingForGapRetracement(config = lifecycleConfig): {
 	state: SMCClosedCandlePipelineState;
 	gap: FairValueGap;
 } {
-	let state = createSmcClosedCandlePipeline(config).createInitialState();
+	let state = createSmcClosedCandleState(config);
 	for (const current of [
 		oneMinuteCandle(0, { open: 100, high: 105, low: 99, close: 104 }),
 		oneMinuteCandle(1, { open: 104, high: 112, low: 103, close: 111 }),
@@ -123,6 +123,7 @@ function withPendingSetup(
 		updatedAt: gap.createdAt,
 		direction: 'LONG',
 		status: 'VALID',
+		eligibility: { eligible: true, failures: [] },
 		score: 85,
 		classification: 'STRONG',
 		entryZone: { min: gap.bottom, max: gap.top },
@@ -146,31 +147,8 @@ function withPendingSetup(
 }
 
 describe('shared closed-candle SMC pipeline', () => {
-	it('processes chronological 1m and 5m candles through isolated timeframe state', () => {
-		const pipeline = createSmcClosedCandlePipeline(DEFAULT_SMC_STRATEGY_CONFIG);
-		let state = pipeline.createInitialState();
-		state = pipeline.processClosedCandle(
-			state,
-			candle(0, '1m', 101),
-			DEFAULT_SMC_STRATEGY_CONFIG
-		).state;
-		state = pipeline.processClosedCandle(
-			state,
-			candle(0, '5m', 102),
-			DEFAULT_SMC_STRATEGY_CONFIG
-		).state;
-
-		expect(state.processedCandles).toBe(2);
-		expect(state.timeframes['1m'].recentCandles).toHaveLength(1);
-		expect(state.timeframes['5m'].recentCandles).toHaveLength(1);
-		expect(state.timeframes['1m'].processedCandles).toBe(1);
-		expect(state.timeframes['1m'].atr.processedCandles).toBe(1);
-		expect(state.timeframes['5m'].atr.processedCandles).toBe(1);
-	});
-
 	it('confirms a rightBars swing only on the fifth closed candle', () => {
-		const pipeline = createSmcClosedCandlePipeline(DEFAULT_SMC_STRATEGY_CONFIG);
-		let state = pipeline.createInitialState();
+		let state = createSmcClosedCandleState(DEFAULT_SMC_STRATEGY_CONFIG);
 		const highs = [101, 102, 110, 103, 102];
 
 		for (let index = 0; index < highs.length; index += 1) {
@@ -189,16 +167,145 @@ describe('shared closed-candle SMC pipeline', () => {
 	});
 
 	it('rejects reverse-time candles before any domain state can be contaminated', () => {
-		const pipeline = createSmcClosedCandlePipeline(DEFAULT_SMC_STRATEGY_CONFIG);
-		const state = pipeline.processClosedCandle(
-			pipeline.createInitialState(),
+		const state = processSmcClosedCandle(
+			createSmcClosedCandleState(DEFAULT_SMC_STRATEGY_CONFIG),
 			candle(60_000, '1m', 102),
 			DEFAULT_SMC_STRATEGY_CONFIG
 		).state;
 
 		expect(() =>
-			pipeline.processClosedCandle(state, candle(0, '1m', 101), DEFAULT_SMC_STRATEGY_CONFIG)
+			processSmcClosedCandle(state, candle(0, '1m', 101), DEFAULT_SMC_STRATEGY_CONFIG)
 		).toThrow(/non-decreasing close time/);
+	});
+
+	it('evaluates displacement against the ATR known before the current candle', () => {
+		const config = {
+			...DEFAULT_SMC_STRATEGY_CONFIG,
+			atrPeriod: 1,
+			displacementATRMultiplier: 2
+		};
+		let state = processSmcClosedCandle(
+			createSmcClosedCandleState(config),
+			oneMinuteCandle(0, { open: 100, high: 101, low: 99, close: 100 }),
+			config
+		).state;
+		state = {
+			...state,
+			htfBias: 'BULLISH',
+			strategy: {
+				...createStrategyState(),
+				stage: 'WAITING_FOR_DISPLACEMENT',
+				direction: 'LONG',
+				bias: 'BULLISH',
+				sourceEventIds: ['bias', 'sweep', 'choch'],
+				processedEventIds: ['bias', 'sweep', 'choch'],
+				startedAt: 0,
+				lastProcessedTimestamp: 59_999
+			},
+			sequence: {
+				sweep: {
+					id: 'sweep',
+					liquidityId: 'sell-side',
+					timestamp: 59_999,
+					direction: 'SELL_SIDE',
+					liquidityPrice: 99,
+					extremePrice: 98,
+					closePrice: 100
+				},
+				choch: {
+					id: 'choch',
+					timestamp: 59_999,
+					direction: 'BULLISH',
+					type: 'CHOCH',
+					brokenSwingId: 'lh',
+					brokenLevel: 101,
+					closePrice: 102
+				},
+				displacement: null
+			}
+		};
+
+		const result = processSmcClosedCandle(
+			state,
+			oneMinuteCandle(1, { open: 100, high: 110, low: 100, close: 105 }),
+			config
+		);
+
+		expect(result.state.sequence.displacement).toMatchObject({
+			bodySize: 5,
+			atr: 2,
+			threshold: 4
+		});
+		expect(result.state.timeframes['1m'].atr.atr).toBe(10);
+	});
+
+	it('advances at most one dependent strategy stage per OHLC candle', () => {
+		const config = {
+			...DEFAULT_SMC_STRATEGY_CONFIG,
+			atrPeriod: 1,
+			displacementATRMultiplier: 0.1
+		};
+		let state = processSmcClosedCandle(
+			createSmcClosedCandleState(config),
+			oneMinuteCandle(0, { open: 100, high: 101, low: 99, close: 100 }),
+			config
+		).state;
+		state = {
+			...state,
+			htfBias: 'BULLISH',
+			strategy: {
+				...createStrategyState(),
+				stage: 'WAITING_FOR_SWEEP',
+				direction: 'LONG',
+				bias: 'BULLISH',
+				sourceEventIds: ['bias'],
+				processedEventIds: ['bias'],
+				startedAt: 0,
+				lastProcessedTimestamp: 59_999
+			},
+			timeframes: {
+				...state.timeframes,
+				'1m': {
+					...state.timeframes['1m'],
+					marketStructure: {
+						symbol: 'BTCUSDT',
+						timeframe: '1m',
+						bias: 'BEARISH',
+						sequence: [{ swingId: 'lh', timestamp: 59_999, price: 101, structure: 'LH' }],
+						lastHigh: null,
+						lastLow: null,
+						latestHighStructure: 'LH',
+						latestLowStructure: 'LL',
+						lastProcessedTimestamp: 59_999
+					},
+					liquidity: {
+						...state.timeframes['1m'].liquidity,
+						levels: [
+							{
+								id: 'sell-side',
+								type: 'SELL_SIDE',
+								price: 99,
+								createdAt: 59_999,
+								source: 'SWING_LOW',
+								sourceSwingIds: ['low'],
+								status: 'ACTIVE'
+							}
+						]
+					}
+				}
+			}
+		};
+
+		const result = processSmcClosedCandle(
+			state,
+			oneMinuteCandle(1, { open: 100, high: 106, low: 98, close: 105 }),
+			config
+		);
+
+		expect(result.state.strategy.stage).toBe('WAITING_FOR_CHOCH');
+		expect(result.state.sequence.sweep).not.toBeNull();
+		expect(result.state.sequence.choch).toBeNull();
+		expect(result.state.sequence.displacement).toBeNull();
 	});
 
 	it('emits a VALID setup before touch, then triggers it on the first entry boundary touch', () => {
@@ -215,6 +322,9 @@ describe('shared closed-candle SMC pipeline', () => {
 		);
 		expect(setup).toMatchObject({
 			status: 'VALID',
+			eligibility: { eligible: true, failures: [] },
+			score: 25,
+			classification: 'WEAK',
 			entryZone: { min: gap.bottom, max: gap.top },
 			entryPrice: gap.top,
 			pendingEntryBars: 0,
@@ -235,6 +345,18 @@ describe('shared closed-candle SMC pipeline', () => {
 			triggeredAt: 299_999
 		});
 		expect(triggered.state.activeSetupId).toBeNull();
+	});
+
+	it('emits no setup when a mandatory eligibility rule fails', () => {
+		const { state } = stateWaitingForGapRetracement();
+		const result = processSmcClosedCandle(
+			{ ...state, htfBias: 'BEARISH' },
+			oneMinuteCandle(3, { open: 110, high: 111, low: 108, close: 109 }),
+			lifecycleConfig
+		);
+
+		expect(result.setups).toEqual([]);
+		expect(result.state.setupRegistry).toEqual([]);
 	});
 
 	it('does not create a setup when the active FVG is canonically FILLED', () => {

@@ -7,12 +7,20 @@ Satu analysis pipeline harus dapat digunakan oleh:
 1. historical replay;
 2. realtime candle stream.
 
-Ideal API shape:
+Canonical strategy API:
 
 ```text
-processClosedCandle(state, candle, config)
+processCanonicalMinute(state, closed1mCandle, config)
 -> nextState + domainEvents
 ```
+
+The strategy accepts only canonical closed 1m input. A UTC-aligned 5m candle is derived inside
+that orchestration and processed before the same-close 1m candle. Native exchange 5m data is
+diagnostic only and is not a strategy-state input.
+
+Timeframe durations, canonical/bias timeframe identifiers, the primary research symbol, and
+derived aggregation ratios are defined in `src/lib/domain/market/constants.ts`. Quality
+classification boundaries are defined only by `QUALITY_SCORE_BANDS` in the scoring domain.
 
 ## Recommended modules
 

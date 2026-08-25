@@ -5,10 +5,12 @@ import {
 	mergeCandleBatches,
 	sortCandlesChronologically
 } from './candle-utils.js';
-
-const ONE_MINUTE_MILLISECONDS = 60_000;
-const FIVE_MINUTES_MILLISECONDS = 300_000;
-const MINUTES_PER_BUCKET = 5;
+import {
+	CANONICAL_CANDLES_PER_BIAS_CANDLE,
+	CANONICAL_STRATEGY_TIMEFRAME,
+	DERIVED_BIAS_TIMEFRAME,
+	TIMEFRAME_DURATION_MILLISECONDS
+} from './constants.js';
 
 export interface IncompleteFiveMinuteBucket {
 	symbol: string;
@@ -36,7 +38,7 @@ export function aggregateOneMinuteCandlesToFiveMinutes(
 	for (const candle of candles) {
 		assertValidCandle(candle);
 
-		if (candle.timeframe !== '1m') {
+		if (candle.timeframe !== CANONICAL_STRATEGY_TIMEFRAME) {
 			throw new CandleAggregationError(
 				`Expected only 1m source candles, received ${candle.timeframe} for ${getCandleIdentity(candle)}.`
 			);
@@ -50,8 +52,8 @@ export function aggregateOneMinuteCandlesToFiveMinutes(
 	>();
 
 	for (const candle of deduplicatedCandles) {
-		const bucketOpenTimestamp =
-			Math.floor(candle.openTimestamp / FIVE_MINUTES_MILLISECONDS) * FIVE_MINUTES_MILLISECONDS;
+		const biasDuration = TIMEFRAME_DURATION_MILLISECONDS[DERIVED_BIAS_TIMEFRAME];
+		const bucketOpenTimestamp = Math.floor(candle.openTimestamp / biasDuration) * biasDuration;
 		const bucketIdentity = JSON.stringify([candle.symbol, bucketOpenTimestamp]);
 		let bucket = buckets.get(bucketIdentity);
 
@@ -72,8 +74,9 @@ export function aggregateOneMinuteCandlesToFiveMinutes(
 
 	for (const bucket of buckets.values()) {
 		const expectedOpenTimestamps = Array.from(
-			{ length: MINUTES_PER_BUCKET },
-			(_, index) => bucket.openTimestamp + index * ONE_MINUTE_MILLISECONDS
+			{ length: CANONICAL_CANDLES_PER_BIAS_CANDLE },
+			(_, index) =>
+				bucket.openTimestamp + index * TIMEFRAME_DURATION_MILLISECONDS[CANONICAL_STRATEGY_TIMEFRAME]
 		);
 		const presentOpenTimestamps = expectedOpenTimestamps.filter((timestamp) =>
 			bucket.candlesByOpenTimestamp.has(timestamp)
@@ -114,9 +117,10 @@ export function aggregateOneMinuteCandlesToFiveMinutes(
 
 		aggregatedCandles.push({
 			symbol: bucket.symbol,
-			timeframe: '5m',
+			timeframe: DERIVED_BIAS_TIMEFRAME,
 			openTimestamp: bucket.openTimestamp,
-			closeTimestamp: bucket.openTimestamp + FIVE_MINUTES_MILLISECONDS - 1,
+			closeTimestamp:
+				bucket.openTimestamp + TIMEFRAME_DURATION_MILLISECONDS[DERIVED_BIAS_TIMEFRAME] - 1,
 			open: firstCandle.open,
 			high: Math.max(...sourceCandles.map(({ high }) => high)),
 			low: Math.min(...sourceCandles.map(({ low }) => low)),

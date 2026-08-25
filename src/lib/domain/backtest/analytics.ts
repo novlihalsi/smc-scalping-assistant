@@ -1,4 +1,5 @@
 import type { BacktestMetrics, BacktestTrade } from './models.js';
+import { QUALITY_SCORE_BANDS } from '../scoring/index.js';
 
 export interface EquityCurvePoint {
 	tradeId: string;
@@ -39,13 +40,6 @@ interface NamedBucket {
 	key: string;
 	label: string;
 }
-
-const SCORE_BUCKETS = [
-	{ key: 'NO_TRADE', label: '0–59 · No trade', min: 0, max: 59 },
-	{ key: 'WEAK', label: '60–74 · Weak', min: 60, max: 74 },
-	{ key: 'VALID', label: '75–84 · Valid', min: 75, max: 84 },
-	{ key: 'STRONG', label: '85–100 · Strong', min: 85, max: 100 }
-] as const;
 
 const SESSION_BUCKETS = [
 	{ key: 'ASIA', label: 'Asia · 00:00–07:59 UTC', startHour: 0, endHour: 7 },
@@ -138,7 +132,7 @@ export function buildBreakdowns(trades: readonly BacktestTrade[]): BacktestBreak
 				({ direction }) => direction === 'SHORT'
 			)
 		],
-		score: SCORE_BUCKETS.map(({ key, label, min, max }) =>
+		score: QUALITY_SCORE_BANDS.map(({ classification: key, label, min, max }) =>
 			bucket(
 				{ key, label },
 				chronologicalTrades,

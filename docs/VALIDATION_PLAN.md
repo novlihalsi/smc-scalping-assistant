@@ -31,8 +31,8 @@ Target:
 
 Pisahkan data secara kronologis:
 
-- development/in-sample;
-- validation/out-of-sample.
+- development/in-sample = first 70% of the requested UTC time range;
+- validation/out-of-sample = final 30% of the requested UTC time range.
 
 Jangan tune parameter pada seluruh data lalu menganggap result unbiased.
 
@@ -46,7 +46,22 @@ Bandingkan performa:
 - hour/session;
 - score bands.
 
-## Stage 5 — Candidate Improvement
+Every validation report must retain the IS/OOS metrics, UTC-month metrics, LONG/SHORT, score,
+UTC-hour, and UTC-session breakdowns.
+
+## Stage 5 — Cost and Concentration Sensitivity
+
+Replay the same canonical candle sequence with:
+
+- zero costs;
+- configured baseline costs;
+- 2x configured costs, or 4 bps fee plus 2 bps slippage when the baseline is zero.
+
+Report expectancy and total-R deltas against the configured baseline. Also report how much of
+gross winning R is contributed by the top 5% of trades; concentration above 50% is a review
+warning, not an automatic rejection.
+
+## Stage 6 — Candidate Improvement
 
 Tambahkan hanya satu filter per experiment.
 
@@ -57,6 +72,12 @@ Experiment A = baseline
 Experiment B = baseline + OB
 Experiment C = baseline + discount/premium
 ```
+
+## Experiment Provenance
+
+Every report records the strategy identifier, symbol, UTC range, strategy config, execution-cost
+config, validation schema version, and a deterministic configuration fingerprint. The fingerprint
+is for reproducibility and change detection, not cryptographic authentication.
 
 ## Go / No-Go Questions
 

@@ -17,7 +17,7 @@
 	} from '@lucide/svelte';
 	import type { SubmitFunction } from '@sveltejs/kit';
 
-	import type { EquityCurvePoint } from '$lib/domain/index.js';
+	import { TIMEFRAME_DURATION_MILLISECONDS, type EquityCurvePoint } from '$lib/domain/index.js';
 
 	import type { ActionData, PageData } from './$types.js';
 
@@ -79,8 +79,10 @@
 	}
 
 	function formatDuration(milliseconds: number): string {
-		if (milliseconds < 60_000) return `${Math.round(milliseconds / 1_000)}s`;
-		return `${formatNumber(milliseconds / 60_000, 1)}m`;
+		if (milliseconds < TIMEFRAME_DURATION_MILLISECONDS['1m']) {
+			return `${Math.round(milliseconds / 1_000)}s`;
+		}
+		return `${formatNumber(milliseconds / TIMEFRAME_DURATION_MILLISECONDS['1m'], 1)}m`;
 	}
 
 	function formatTimestamp(timestamp: number): string {
@@ -226,16 +228,6 @@
 								/>
 							</label>
 							<label>
-								<span>Minimum score</span>
-								<input
-									name="minimumScore"
-									type="number"
-									min="0"
-									max="100"
-									value={values.minimumScore}
-								/>
-							</label>
-							<label>
 								<span>Minimum RR</span>
 								<input
 									name="minimumRiskReward"
@@ -324,6 +316,7 @@
 								><Database size={13} />
 								{report.data.processedCandles.toLocaleString()} candles</span
 							>
+							<span>{report.data.preRollCandles.toLocaleString()} pre-roll</span>
 							<span><Clock3 size={13} /> UTC</span>
 						</div>
 					</div>
@@ -439,6 +432,122 @@
 						<article class="table-card">
 							<div class="card-heading compact">
 								<div>
+									<span>Chronological holdout</span>
+									<h3>IS / OOS evidence</h3>
+								</div>
+								<span class="version-chip">70 / 30</span>
+							</div>
+							<div class="breakdown-list">
+								{#each report.validation.chronologicalSplit.segments as segment (segment.key)}
+									<div>
+										<span>{segment.label}</span>
+										<strong>{segment.metrics.totalTrades}</strong>
+										<small
+											>{formatR(segment.metrics.expectancyR)} exp. · PF {segment.metrics
+												.profitFactor === null
+												? '—'
+												: formatNumber(segment.metrics.profitFactor)}</small
+										>
+									</div>
+								{/each}
+							</div>
+						</article>
+
+						<article class="table-card">
+							<div class="card-heading compact">
+								<div>
+									<span>Concentration</span>
+									<h3>Outlier dependence</h3>
+								</div>
+							</div>
+							<div class="breakdown-list">
+								<div>
+									<span>Top {report.validation.outlierConcentration.topPercent}% share</span>
+									<strong
+										>{report.validation.outlierConcentration.shareOfGrossProfitPercent === null
+											? '—'
+											: formatPercent(
+													report.validation.outlierConcentration.shareOfGrossProfitPercent
+												)}</strong
+									>
+									<small>{report.validation.outlierConcentration.topTradeCount} top trades</small>
+								</div>
+								<div>
+									<span>Largest winner</span>
+									<strong
+										>{report.validation.outlierConcentration.largestTradeR === null
+											? '—'
+											: formatR(report.validation.outlierConcentration.largestTradeR)}</strong
+									>
+									<small
+										>{formatR(report.validation.outlierConcentration.grossProfitR)} gross wins</small
+									>
+								</div>
+							</div>
+						</article>
+
+						<article class="table-card">
+							<div class="card-heading compact">
+								<div>
+									<span>Reproducibility</span>
+									<h3>Experiment provenance</h3>
+								</div>
+							</div>
+							<div class="breakdown-list">
+								<div>
+									<span>Config fingerprint</span>
+									<strong>{report.validation.provenance.configHash}</strong>
+									<small>{report.validation.provenance.schemaVersion}</small>
+								</div>
+								<div>
+									<span>Range</span>
+									<strong>{report.validation.provenance.symbol}</strong>
+									<small
+										>{formatTimestamp(report.validation.provenance.startTimestamp)} – {formatTimestamp(
+											report.validation.provenance.endTimestamp
+										)}</small
+									>
+								</div>
+							</div>
+						</article>
+					</div>
+
+					<article class="table-card time-card">
+						<div class="card-heading compact">
+							<div>
+								<span>Sensitivity</span>
+								<h3>Fee and slippage replay</h3>
+							</div>
+						</div>
+						<div class="responsive-table">
+							<table>
+								<thead
+									><tr
+										><th>Scenario</th><th>Fee</th><th>Slippage</th><th>Trades</th><th>Expectancy</th
+										><th>Δ expectancy</th><th>Total R</th><th>Δ total R</th></tr
+									></thead
+								>
+								<tbody>
+									{#each report.validation.costSensitivity as scenario (scenario.key)}
+										<tr>
+											<td>{scenario.label}</td><td>{formatNumber(scenario.feeBps)} bps</td><td
+												>{formatNumber(scenario.slippageBps)} bps</td
+											><td>{scenario.metrics.totalTrades}</td><td
+												>{formatR(scenario.metrics.expectancyR)}</td
+											><td>{formatR(scenario.expectancyDeltaR)}</td><td
+												>{formatR(scenario.metrics.totalR)}</td
+											><td>{formatR(scenario.totalRDelta)}</td>
+										</tr>
+									{/each}
+								</tbody>
+							</table>
+						</div>
+					</article>
+
+					<div class="breakdown-grid">
+						<article class="table-card">
+							<div class="card-heading compact">
+								<div>
 									<span>Breakdown</span>
 									<h3>Direction</h3>
 								</div>
@@ -496,6 +605,38 @@
 							</div>
 						</article>
 					</div>
+
+					<article class="table-card time-card">
+						<div class="card-heading compact">
+							<div>
+								<span>Period robustness</span>
+								<h3>Performance by UTC month</h3>
+							</div>
+						</div>
+						<div class="responsive-table">
+							<table>
+								<thead
+									><tr
+										><th>Month</th><th>Trades</th><th>Win rate</th><th>Expectancy</th><th
+											>Total R</th
+										><th>Max DD</th></tr
+									></thead
+								>
+								<tbody>
+									{#each report.validation.robustness.months as period (period.key)}
+										<tr>
+											<td>{period.label}</td><td>{period.metrics.totalTrades}</td><td
+												>{formatPercent(period.metrics.winRate)}</td
+											>
+											<td>{formatR(period.metrics.expectancyR)}</td><td
+												>{formatR(period.metrics.totalR)}</td
+											><td>{formatNumber(period.metrics.maxDrawdownR)}R</td>
+										</tr>
+									{/each}
+								</tbody>
+							</table>
+						</div>
+					</article>
 
 					<article class="table-card time-card">
 						<div class="card-heading compact">
@@ -627,9 +768,9 @@
 						<span>Fee {formatNumber(report.executionConfig.feeBps)} bps / side</span>
 						<span>Slippage {formatNumber(report.executionConfig.slippageBps)} bps / side</span>
 						<span>Entry at zone midpoint</span>
-						<span
-							>Pending {report.data.pendingTrades} · Open {report.data.openTrades} at range end</span
-						>
+						<span>Expired pending {report.data.expiredPendingTrades}</span>
+						<span>Censored open {report.data.censoredOpenTrades}</span>
+						<span>Pre-roll trades excluded {report.data.preRollTradesExcluded}</span>
 					</footer>
 				{:else}
 					<div class="empty-state">

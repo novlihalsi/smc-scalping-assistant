@@ -1,4 +1,8 @@
-import type { Timeframe } from '../market/index.js';
+import type {
+	CANONICAL_STRATEGY_TIMEFRAME,
+	DERIVED_BIAS_TIMEFRAME,
+	Timeframe
+} from '../market/index.js';
 import type { FairValueGap, LiquiditySweep, MarketBias, StructureBreak } from '../smc/models.js';
 import type { DisplacementEvent } from '../smc/displacement-engine.js';
 
@@ -21,37 +25,37 @@ interface BaseStrategySignal {
 
 export interface HtfBiasSignal extends BaseStrategySignal {
 	type: 'HTF_BIAS';
-	timeframe: '5m';
+	timeframe: typeof DERIVED_BIAS_TIMEFRAME;
 	bias: MarketBias;
 }
 
 export interface LiquiditySweepSignal extends BaseStrategySignal {
 	type: 'LIQUIDITY_SWEEP';
-	timeframe: '1m';
+	timeframe: typeof CANONICAL_STRATEGY_TIMEFRAME;
 	sweep: LiquiditySweep;
 }
 
 export interface ChochSignal extends BaseStrategySignal {
 	type: 'CHOCH';
-	timeframe: '1m';
+	timeframe: typeof CANONICAL_STRATEGY_TIMEFRAME;
 	structureBreak: StructureBreak;
 }
 
 export interface DisplacementSignal extends BaseStrategySignal {
 	type: 'DISPLACEMENT';
-	timeframe: '1m';
+	timeframe: typeof CANONICAL_STRATEGY_TIMEFRAME;
 	displacement: DisplacementEvent;
 }
 
 export interface FvgSignal extends BaseStrategySignal {
 	type: 'FVG';
-	timeframe: '1m';
+	timeframe: typeof CANONICAL_STRATEGY_TIMEFRAME;
 	gap: FairValueGap;
 }
 
 export interface RetracementSignal extends BaseStrategySignal {
 	type: 'RETRACEMENT';
-	timeframe: '1m';
+	timeframe: typeof CANONICAL_STRATEGY_TIMEFRAME;
 	fvg: FairValueGap;
 	price: number;
 }

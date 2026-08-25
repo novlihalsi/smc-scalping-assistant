@@ -6,19 +6,10 @@ export {
 	processCanonicalMinute
 } from './canonical-minute-pipeline.js';
 export type {
+	CanonicalMinutePipelineErrorCode,
 	CanonicalMinutePipelineState,
 	CanonicalMinuteProcessingResult
 } from './canonical-minute-pipeline.js';
-export {
-	createSmcClosedCandlePipeline,
-	createSmcClosedCandleState,
-	processSmcClosedCandle
-} from './candle-pipeline.js';
-export type {
-	SMCClosedCandlePipelineState,
-	SMCClosedCandleTimeframeState,
-	SMCSequenceContext
-} from './candle-pipeline.js';
 export type { SetupDependencies, SMCStrategyConfig, TradingSetup } from './models.js';
 export { createStrategyState, processStrategySignal, StrategyStateError } from './state-machine.js';
 export type {

@@ -5,8 +5,10 @@ export {
 	buildBreakdowns,
 	buildEquityCurve,
 	calculateBacktestMetrics,
+	createValidationConfigHash,
 	DEFAULT_BACKTEST_EXECUTION_CONFIG,
 	generateBacktestValidationReport,
+	runCanonicalReplayParity,
 	runBacktest
 } from './backtest/index.js';
 export type {
@@ -19,45 +21,83 @@ export type {
 	BacktestMetrics,
 	BacktestRunResult,
 	BacktestTrade,
+	BacktestValidationInput,
 	BacktestValidationReport,
+	CensoredOpenBacktestTrade,
+	CanonicalReplayEvent,
+	CanonicalReplayEventType,
+	CanonicalReplayObservation,
+	CanonicalReplayParityComparison,
+	CanonicalReplayParityResult,
 	ClosedCandlePipeline,
 	ClosedCandlePipelineResult,
 	EquityCurvePoint,
+	ExpiredPendingBacktestTrade,
 	OpenBacktestTrade,
 	PendingBacktestTrade,
 	RunBacktestOptions,
+	RunCanonicalReplayParityOptions,
+	ValidationChronologicalSplit,
 	ValidationCheck,
 	ValidationCheckStatus,
+	ValidationCostRun,
+	ValidationCostScenario,
+	ValidationMonthlyPeriod,
+	ValidationOutlierConcentration,
+	ValidationProvenance,
+	ValidationRobustness,
+	ValidationSegment,
 	ValidationVerdict
 } from './backtest/index.js';
 export {
 	aggregateOneMinuteCandlesToFiveMinutes,
 	assertValidCandle,
+	CANONICAL_CANDLES_PER_BIAS_CANDLE,
+	CANONICAL_STRATEGY_TIMEFRAME,
 	CandleAggregationError,
+	CandleContinuityError,
 	CandleValidationError,
+	DERIVED_BIAS_TIMEFRAME,
 	getCandleIdentity,
 	getTimeframeDurationMilliseconds,
+	isTimeframe,
+	MILLISECONDS_PER_DAY,
 	mergeCandleBatches,
+	PRIMARY_MARKET_SYMBOL,
+	prepareContinuousOneMinuteCandles,
 	sortCandlesChronologically,
+	TIMEFRAME_DURATION_MILLISECONDS,
 	validateCandle
 } from './market/index.js';
 export type {
 	Candle,
+	CandleContinuityErrorCode,
 	CandleValidationIssue,
 	CandleValidationIssueCode,
 	CandleValidationResult,
 	FiveMinuteAggregationResult,
 	IncompleteFiveMinuteBucket,
+	OneMinuteContinuityRange,
 	Timeframe
 } from './market/index.js';
 export { calculateRiskPlan, RiskCalculationError } from './risk/index.js';
 export type { RiskCalculationInput, RiskConfig, RiskErrorCode, RiskPlan } from './risk/index.js';
-export { classifySetupScore, scoreSetup } from './scoring/index.js';
+export {
+	classifyQualityScore,
+	evaluateSetupEligibility,
+	QUALITY_SCORE_BANDS,
+	QUALITY_SCORE_MAX,
+	QUALITY_SCORE_MIN,
+	scoreSetupQuality
+} from './scoring/index.js';
 export type {
+	EligibilityFailure,
+	EligibilityInput,
+	EligibilityResult,
+	QualityScoreResult,
+	QualityScoringInput,
 	SetupClassification,
-	SetupReason,
-	SetupScoreResult,
-	SetupScoringInput
+	SetupReason
 } from './scoring/index.js';
 export {
 	AtrError,
@@ -130,16 +170,14 @@ export {
 	CanonicalMinutePipelineError,
 	createCanonicalMinutePipeline,
 	createCanonicalMinutePipelineState,
-	createSmcClosedCandlePipeline,
-	createSmcClosedCandleState,
 	createStrategyState,
 	DEFAULT_SMC_STRATEGY_CONFIG,
 	processCanonicalMinute,
-	processSmcClosedCandle,
 	processStrategySignal,
 	StrategyStateError
 } from './strategy/index.js';
 export type {
+	CanonicalMinutePipelineErrorCode,
 	CanonicalMinutePipelineState,
 	CanonicalMinuteProcessingResult,
 	ChochSignal,
@@ -151,9 +189,6 @@ export type {
 	RetracementSignal,
 	SetupDependencies,
 	SMCStrategyConfig,
-	SMCClosedCandlePipelineState,
-	SMCClosedCandleTimeframeState,
-	SMCSequenceContext,
 	StrategyDirection,
 	StrategyProcessingResult,
 	StrategySignal,

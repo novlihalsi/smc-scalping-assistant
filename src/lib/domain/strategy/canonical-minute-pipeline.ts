@@ -1,6 +1,9 @@
 import {
 	aggregateOneMinuteCandlesToFiveMinutes,
 	assertValidCandle,
+	CANONICAL_STRATEGY_TIMEFRAME,
+	DERIVED_BIAS_TIMEFRAME,
+	TIMEFRAME_DURATION_MILLISECONDS,
 	type Candle
 } from '../market/index.js';
 import type { SMCStrategyConfig, TradingSetup } from './models.js';
@@ -10,8 +13,13 @@ import {
 	type SMCClosedCandlePipelineState
 } from './candle-pipeline.js';
 
-const FIVE_MINUTES_MILLISECONDS = 300_000;
-const LAST_MINUTE_OFFSET = 240_000;
+export type CanonicalMinutePipelineErrorCode =
+	| 'INVALID_TIMEFRAME'
+	| 'UNCLOSED_CANDLE'
+	| 'DUPLICATE_CANDLE'
+	| 'OUT_OF_ORDER_CANDLE'
+	| 'DATA_GAP'
+	| 'MIXED_SYMBOLS';
 
 export interface CanonicalMinutePipelineState {
 	pipeline: SMCClosedCandlePipelineState;
@@ -28,7 +36,10 @@ export interface CanonicalMinuteProcessingResult {
 }
 
 export class CanonicalMinutePipelineError extends Error {
-	constructor(message: string) {
+	constructor(
+		public readonly code: CanonicalMinutePipelineErrorCode,
+		message: string
+	) {
 		super(message);
 		this.name = 'CanonicalMinutePipelineError';
 	}
@@ -69,17 +80,17 @@ export function processCanonicalMinute(
 ): CanonicalMinuteProcessingResult {
 	assertCanonicalMinute(state, candle);
 
-	const bucketOpenTimestamp =
-		Math.floor(candle.openTimestamp / FIVE_MINUTES_MILLISECONDS) * FIVE_MINUTES_MILLISECONDS;
+	const biasDuration = TIMEFRAME_DURATION_MILLISECONDS[DERIVED_BIAS_TIMEFRAME];
+	const canonicalDuration = TIMEFRAME_DURATION_MILLISECONDS[CANONICAL_STRATEGY_TIMEFRAME];
+	const bucketOpenTimestamp = Math.floor(candle.openTimestamp / biasDuration) * biasDuration;
 	const existingBucketOpenTimestamp = state.pendingFiveMinuteSource[0]?.openTimestamp;
 	const pendingFiveMinuteSource =
 		existingBucketOpenTimestamp === undefined ||
-		Math.floor(existingBucketOpenTimestamp / FIVE_MINUTES_MILLISECONDS) *
-			FIVE_MINUTES_MILLISECONDS ===
-			bucketOpenTimestamp
+		Math.floor(existingBucketOpenTimestamp / biasDuration) * biasDuration === bucketOpenTimestamp
 			? [...state.pendingFiveMinuteSource, { ...candle }]
 			: [{ ...candle }];
-	const closesFiveMinuteBucket = candle.openTimestamp === bucketOpenTimestamp + LAST_MINUTE_OFFSET;
+	const closesFiveMinuteBucket =
+		candle.openTimestamp === bucketOpenTimestamp + biasDuration - canonicalDuration;
 	const derivedFiveMinuteCandle = closesFiveMinuteBucket
 		? aggregateCompleteBucket(pendingFiveMinuteSource)
 		: null;
@@ -121,22 +132,40 @@ function aggregateCompleteBucket(source: readonly Candle[]): Candle | null {
 
 function assertCanonicalMinute(state: CanonicalMinutePipelineState, candle: Candle): void {
 	assertValidCandle(candle);
-	if (candle.timeframe !== '1m') {
-		throw new CanonicalMinutePipelineError('Canonical orchestration accepts only 1m candles.');
+	if (candle.timeframe !== CANONICAL_STRATEGY_TIMEFRAME) {
+		throw new CanonicalMinutePipelineError(
+			'INVALID_TIMEFRAME',
+			'Canonical orchestration accepts only 1m candles.'
+		);
 	}
 	if (!candle.closed) {
-		throw new CanonicalMinutePipelineError('Canonical orchestration requires closed 1m candles.');
-	}
-	if (
-		state.lastProcessedMinuteTimestamp !== null &&
-		candle.closeTimestamp <= state.lastProcessedMinuteTimestamp
-	) {
 		throw new CanonicalMinutePipelineError(
-			'Canonical 1m candles must be processed once in chronological order.'
+			'UNCLOSED_CANDLE',
+			'Canonical orchestration requires closed 1m candles.'
 		);
+	}
+	if (state.lastProcessedMinuteTimestamp !== null) {
+		const expectedOpenTimestamp = state.lastProcessedMinuteTimestamp + 1;
+		if (candle.openTimestamp < expectedOpenTimestamp) {
+			throw new CanonicalMinutePipelineError(
+				candle.closeTimestamp === state.lastProcessedMinuteTimestamp
+					? 'DUPLICATE_CANDLE'
+					: 'OUT_OF_ORDER_CANDLE',
+				'Canonical 1m candles must be processed once in chronological order.'
+			);
+		}
+		if (candle.openTimestamp > expectedOpenTimestamp) {
+			throw new CanonicalMinutePipelineError(
+				'DATA_GAP',
+				`Missing canonical 1m candle at ${expectedOpenTimestamp}; next candle opens at ${candle.openTimestamp}.`
+			);
+		}
 	}
 	const pendingSymbol = state.pendingFiveMinuteSource[0]?.symbol;
 	if (pendingSymbol !== undefined && pendingSymbol !== candle.symbol) {
-		throw new CanonicalMinutePipelineError('Canonical aggregation cannot mix symbols.');
+		throw new CanonicalMinutePipelineError(
+			'MIXED_SYMBOLS',
+			'Canonical aggregation cannot mix symbols.'
+		);
 	}
 }

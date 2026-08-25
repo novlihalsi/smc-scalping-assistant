@@ -1,11 +1,5 @@
-import type { Candle, Timeframe } from './models.js';
-
-const TIMEFRAME_DURATION_MILLISECONDS: Record<Timeframe, number> = {
-	'1m': 60_000,
-	'5m': 300_000,
-	'15m': 900_000,
-	'1h': 3_600_000
-};
+import type { Candle } from './models.js';
+import { getTimeframeDurationMilliseconds, isTimeframe } from './constants.js';
 
 export type CandleValidationIssueCode =
 	| 'INVALID_SYMBOL'
@@ -37,10 +31,6 @@ export class CandleValidationError extends Error {
 		this.name = 'CandleValidationError';
 		this.issues = issues;
 	}
-}
-
-export function getTimeframeDurationMilliseconds(timeframe: Timeframe): number {
-	return TIMEFRAME_DURATION_MILLISECONDS[timeframe];
 }
 
 export function getCandleIdentity(
@@ -165,10 +155,6 @@ export function mergeCandleBatches(...batches: ReadonlyArray<readonly Candle[]>)
 	}
 
 	return sortCandlesChronologically(candlesByIdentity.values());
-}
-
-function isTimeframe(value: unknown): value is Timeframe {
-	return value === '1m' || value === '5m' || value === '15m' || value === '1h';
 }
 
 function isNonNegativeSafeInteger(value: number): boolean {

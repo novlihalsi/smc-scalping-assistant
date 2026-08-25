@@ -100,6 +100,21 @@ export interface SetupReason {
 	description: string;
 }
 
+export interface EligibilityResult {
+	eligible: boolean;
+	failures: readonly {
+		key: string;
+		label: string;
+		description: string;
+	}[];
+}
+
+export interface QualityScoreResult {
+	score: number;
+	classification: 'WEAK' | 'VALID' | 'STRONG';
+	reasons: readonly SetupReason[];
+}
+
 export interface SetupDependencies {
 	fvgId: string;
 	orderBlockId: string | null;
@@ -115,8 +130,9 @@ export interface TradingSetup {
 	updatedAt: number;
 	direction: 'LONG' | 'SHORT';
 	status: 'FORMING' | 'VALID' | 'TRIGGERED' | 'INVALIDATED' | 'TP' | 'SL';
+	eligibility: EligibilityResult;
 	score: number;
-	classification: 'NO_TRADE' | 'WEAK' | 'VALID' | 'STRONG';
+	classification: QualityScoreResult['classification'];
 	entryZone: { min: number; max: number };
 	entryPrice: number;
 	stopLoss: number;
@@ -138,7 +154,6 @@ export interface SMCStrategyConfig {
 	liquidityTolerancePercent: number;
 	atrPeriod: number;
 	displacementATRMultiplier: number;
-	minimumScore: number;
 	minimumRiskReward: number;
 	stopLossATRBuffer: number;
 	maxPendingEntryBars: number;
@@ -152,7 +167,6 @@ export const DEFAULT_SMC_STRATEGY_CONFIG: SMCStrategyConfig = {
 	liquidityTolerancePercent: 0.1,
 	atrPeriod: 14,
 	displacementATRMultiplier: 1.2,
-	minimumScore: 75,
 	minimumRiskReward: 1.5,
 	stopLossATRBuffer: 0.1,
 	maxPendingEntryBars: 10

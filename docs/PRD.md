@@ -67,26 +67,28 @@ Optional confluence:
 
 Mirror dari LONG.
 
-## 5. Signal Score
+## 5. Eligibility and Quality Score
 
-| Condition          |   Score |
-| ------------------ | ------: |
-| HTF bias           |      20 |
-| Liquidity sweep    |      20 |
-| CHoCH              |      20 |
-| FVG                |      15 |
-| Order Block        |      10 |
-| Premium / Discount |       5 |
-| Displacement       |       5 |
-| Valid RR           |       5 |
-| **Total**          | **100** |
+Mandatory eligibility is evaluated before scoring: aligned HTF bias, liquidity sweep, CHoCH,
+displacement, causal FVG, valid entry geometry, and RR at or above the configured minimum. A
+failure produces no setup; `NO_TRADE` is not a numeric classification.
 
-Classification:
+| Quality dimension        |   Score |
+| ------------------------ | ------: |
+| Order Block overlap      |      25 |
+| Premium / Discount       |      20 |
+| Sweep quality            |      15 |
+| Displacement strength    |      15 |
+| FVG quality              |      10 |
+| Target quality           |      10 |
+| Reserved / session-ready |       5 |
+| **Total**                | **100** |
 
-- 0–59 `NO_TRADE`
-- 60–74 `WEAK`
-- 75–84 `VALID`
-- 85–100 `STRONG`
+Eligible setup classification:
+
+- 0–59 `WEAK`
+- 60–79 `VALID`
+- 80–100 `STRONG`
 
 ## 6. Risk Rules
 

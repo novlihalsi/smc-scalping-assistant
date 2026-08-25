@@ -102,11 +102,11 @@ describe('backtest analytics', () => {
 		expect(
 			analytics.breakdowns.score.map(({ key, metrics }) => [key, metrics.totalTrades])
 		).toEqual([
-			['NO_TRADE', 1],
 			['WEAK', 1],
-			['VALID', 1],
+			['VALID', 2],
 			['STRONG', 1]
 		]);
+		expect(analytics.breakdowns.score.map(({ key }) => key)).not.toContain('NO_TRADE');
 		expect(analytics.breakdowns.hourUtc.map(({ key }) => key)).toEqual(['1', '9', '14', '22']);
 		expect(analytics.breakdowns.dayUtc.map(({ key }) => key)).toEqual(['2026-01-01', '2026-01-02']);
 		expect(

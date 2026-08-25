@@ -1,6 +1,10 @@
-import type { Candle } from '../market/index.js';
+import {
+	CANONICAL_STRATEGY_TIMEFRAME,
+	DERIVED_BIAS_TIMEFRAME,
+	type Candle
+} from '../market/index.js';
 import { calculateRiskPlan, RiskCalculationError, type RiskPlan } from '../risk/index.js';
-import { scoreSetup } from '../scoring/index.js';
+import { evaluateSetupEligibility, scoreSetupQuality } from '../scoring/index.js';
 import {
 	calculateDealingRange,
 	classifyPremiumDiscount,
@@ -91,25 +95,14 @@ interface TimeframeProcessingResult {
 const NORMALIZED_ACCOUNT_BALANCE = 1;
 const NORMALIZED_RISK_PERCENT = 1;
 
-export function createSmcClosedCandlePipeline(config: SMCStrategyConfig) {
-	return {
-		createInitialState: (): SMCClosedCandlePipelineState => createSmcClosedCandleState(config),
-		processClosedCandle: (
-			state: SMCClosedCandlePipelineState,
-			candle: Candle,
-			processingConfig: SMCStrategyConfig
-		) => processSmcClosedCandle(state, candle, processingConfig)
-	};
-}
-
 export function createSmcClosedCandleState(
 	config: SMCStrategyConfig
 ): SMCClosedCandlePipelineState {
 	assertPendingEntryConfig(config);
 	return {
 		timeframes: {
-			'1m': createTimeframeState(config),
-			'5m': createTimeframeState(config)
+			[CANONICAL_STRATEGY_TIMEFRAME]: createTimeframeState(config),
+			[DERIVED_BIAS_TIMEFRAME]: createTimeframeState(config)
 		},
 		strategy: createStrategyState(),
 		sequence: emptySequence(),
@@ -147,7 +140,7 @@ export function processSmcClosedCandle(
 			type: 'HTF_BIAS',
 			id: JSON.stringify(['HTF_BIAS', candle.symbol, candle.closeTimestamp, htfBias]),
 			timestamp: candle.closeTimestamp,
-			timeframe: '5m',
+			timeframe: DERIVED_BIAS_TIMEFRAME,
 			bias: htfBias
 		});
 		strategy = biasResult.state;
@@ -186,7 +179,14 @@ export function processSmcClosedCandle(
 			));
 
 			if (strategy.stage === 'WAITING_FOR_RETRACEMENT' && strategy.direction) {
-				const setup = createTradingSetup(strategy, sequence, timeframeResult.state, candle, config);
+				const setup = createTradingSetup(
+					strategy,
+					sequence,
+					timeframeResult.state,
+					htfBias,
+					candle,
+					config
+				);
 				if (setup) {
 					setupRegistry = upsertSetup(setupRegistry, setup);
 					setups.push(setup);
@@ -248,8 +248,9 @@ function processTimeframeCandle(
 	const chochResult = processChochCandle(state.choch, candle, marketStructure);
 	marketStructure = chochResult.marketStructure;
 	const sweepResult = processLiquiditySweepCandle(liquidity, candle);
+	const previousAtr = state.atr.atr;
 	const atrResult = processAtrCandle(state.atr, candle);
-	const displacement = detectDisplacement(candle, atrResult.value?.atr ?? null, {
+	const displacement = detectDisplacement(candle, previousAtr, {
 		atrMultiplier: config.displacementATRMultiplier
 	});
 	const fvgResult = processFvgCandle(state.fvg, candle);
@@ -293,25 +294,26 @@ function processEntryEvents(
 ): { strategy: StrategyState; sequence: SMCSequenceContext } {
 	let strategy = initialStrategy;
 	let sequence = initialSequence;
+	const stageAtCandleOpen = initialStrategy.stage;
 
-	for (const sweep of events.sweeps) {
+	for (const sweep of stageAtCandleOpen === 'WAITING_FOR_SWEEP' ? events.sweeps : []) {
 		const result = processStrategySignal(strategy, {
 			type: 'LIQUIDITY_SWEEP',
 			id: sweep.id,
 			timestamp: candle.closeTimestamp,
-			timeframe: '1m',
+			timeframe: CANONICAL_STRATEGY_TIMEFRAME,
 			sweep
 		});
 		strategy = result.state;
 		if (advancedTo(result, 'WAITING_FOR_CHOCH')) sequence = { ...emptySequence(), sweep };
 	}
 
-	if (events.choch) {
+	if (stageAtCandleOpen === 'WAITING_FOR_CHOCH' && events.choch) {
 		const result = processStrategySignal(strategy, {
 			type: 'CHOCH',
 			id: events.choch.id,
 			timestamp: candle.closeTimestamp,
-			timeframe: '1m',
+			timeframe: CANONICAL_STRATEGY_TIMEFRAME,
 			structureBreak: events.choch
 		});
 		strategy = result.state;
@@ -320,12 +322,12 @@ function processEntryEvents(
 		}
 	}
 
-	if (events.displacement) {
+	if (stageAtCandleOpen === 'WAITING_FOR_DISPLACEMENT' && events.displacement) {
 		const result = processStrategySignal(strategy, {
 			type: 'DISPLACEMENT',
 			id: events.displacement.id,
 			timestamp: candle.closeTimestamp,
-			timeframe: '1m',
+			timeframe: CANONICAL_STRATEGY_TIMEFRAME,
 			displacement: events.displacement
 		});
 		strategy = result.state;
@@ -334,12 +336,12 @@ function processEntryEvents(
 		}
 	}
 
-	if (events.createdFvg) {
+	if (stageAtCandleOpen === 'WAITING_FOR_FVG' && events.createdFvg) {
 		strategy = processStrategySignal(strategy, {
 			type: 'FVG',
 			id: events.createdFvg.id,
 			timestamp: candle.closeTimestamp,
-			timeframe: '1m',
+			timeframe: CANONICAL_STRATEGY_TIMEFRAME,
 			gap: events.createdFvg
 		}).state;
 	}
@@ -351,6 +353,7 @@ function createTradingSetup(
 	strategy: StrategyState,
 	sequence: SMCSequenceContext,
 	entryState: SMCClosedCandleTimeframeState,
+	htfBias: MarketBias,
 	candle: Candle,
 	config: SMCStrategyConfig
 ): TradingSetup | null {
@@ -396,17 +399,32 @@ function createTradingSetup(
 	const premiumDiscount = range
 		? classifyPremiumDiscount(riskPlan.entryPrice, range)
 		: 'EQUILIBRIUM';
-	const score = scoreSetup({
-		htfBias: true,
-		liquiditySweep: true,
-		choch: true,
-		fvg: true,
-		orderBlock: riskPlan.entryZoneSource === 'FVG_OB_OVERLAP',
-		premiumDiscount:
+	const expectedDirection = strategy.direction === 'LONG' ? 'BULLISH' : 'BEARISH';
+	const eligibility = evaluateSetupEligibility({
+		alignedHtfBias: htfBias === expectedDirection,
+		liquiditySweep:
+			sequence.sweep.direction === (strategy.direction === 'LONG' ? 'SELL_SIDE' : 'BUY_SIDE'),
+		choch: sequence.choch.type === 'CHOCH' && sequence.choch.direction === expectedDirection,
+		displacement: sequence.displacement.direction === expectedDirection,
+		causalFvg:
+			fvg.type === expectedDirection &&
+			fvg.createdAt >= sequence.displacement.timestamp &&
+			strategy.sourceEventIds.includes(fvg.id),
+		validEntryGeometry: hasValidEntryGeometry(riskPlan),
+		validRiskReward: riskPlan.riskReward >= config.minimumRiskReward
+	});
+	if (!eligibility.eligible) return null;
+
+	const quality = scoreSetupQuality({
+		orderBlockOverlap: riskPlan.entryZoneSource === 'FVG_OB_OVERLAP',
+		premiumDiscountAlignment:
 			(strategy.direction === 'LONG' && premiumDiscount === 'DISCOUNT') ||
 			(strategy.direction === 'SHORT' && premiumDiscount === 'PREMIUM'),
-		displacement: true,
-		validRiskReward: true
+		sweepQuality: hasStrongSweepRejection(sequence.sweep),
+		displacementStrength: sequence.displacement.bodySize >= sequence.displacement.threshold * 1.5,
+		fvgQuality: fvg.state === 'UNTOUCHED',
+		targetQuality: riskPlan.targetSource === 'LIQUIDITY',
+		sessionReady: false
 	});
 	const id = JSON.stringify([
 		'SETUP',
@@ -422,15 +440,16 @@ function createTradingSetup(
 		createdAt: candle.closeTimestamp,
 		updatedAt: candle.closeTimestamp,
 		direction: strategy.direction,
-		status: score.score >= config.minimumScore ? 'VALID' : 'FORMING',
-		score: score.score,
-		classification: score.classification,
+		status: 'VALID',
+		eligibility,
+		score: quality.score,
+		classification: quality.classification,
 		entryZone: riskPlan.entryZone,
 		entryPrice: riskPlan.entryPrice,
 		stopLoss: riskPlan.stopLoss,
 		takeProfit: riskPlan.takeProfit,
 		riskReward: riskPlan.riskReward,
-		reasons: score.reasons.map((reason) => ({ ...reason })),
+		reasons: quality.reasons.map((reason) => ({ ...reason })),
 		sourceEventIds: [...strategy.sourceEventIds],
 		dependencies: {
 			fvgId: fvg.id,
@@ -441,6 +460,25 @@ function createTradingSetup(
 		},
 		pendingEntryBars: 0
 	};
+}
+
+function hasValidEntryGeometry(plan: RiskPlan): boolean {
+	return (
+		Number.isFinite(plan.entryZone.min) &&
+		Number.isFinite(plan.entryZone.max) &&
+		plan.entryZone.min <= plan.entryZone.max &&
+		plan.entryPrice >= plan.entryZone.min &&
+		plan.entryPrice <= plan.entryZone.max &&
+		(plan.direction === 'LONG'
+			? plan.stopLoss < plan.entryPrice && plan.takeProfit > plan.entryPrice
+			: plan.stopLoss > plan.entryPrice && plan.takeProfit < plan.entryPrice)
+	);
+}
+
+function hasStrongSweepRejection(sweep: LiquiditySweep): boolean {
+	const excursion = Math.abs(sweep.extremePrice - sweep.liquidityPrice);
+	const rejection = Math.abs(sweep.closePrice - sweep.liquidityPrice);
+	return rejection >= excursion;
 }
 
 function processPendingSetup(
@@ -548,7 +586,7 @@ function restartStrategy(bias: MarketBias, candle: Candle): StrategyState {
 		type: 'HTF_BIAS',
 		id: JSON.stringify(['HTF_BIAS_RESTART', candle.symbol, candle.closeTimestamp, bias]),
 		timestamp: candle.closeTimestamp,
-		timeframe: '5m',
+		timeframe: DERIVED_BIAS_TIMEFRAME,
 		bias
 	}).state;
 }

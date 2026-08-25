@@ -1,4 +1,5 @@
-import type { SetupReason } from '../scoring/index.js';
+import type { EligibilityResult, SetupClassification, SetupReason } from '../scoring/index.js';
+import type { CANONICAL_STRATEGY_TIMEFRAME, DERIVED_BIAS_TIMEFRAME } from '../market/constants.js';
 
 export interface SetupDependencies {
 	fvgId: string;
@@ -15,8 +16,9 @@ export interface TradingSetup {
 	updatedAt: number;
 	direction: 'LONG' | 'SHORT';
 	status: 'FORMING' | 'VALID' | 'TRIGGERED' | 'INVALIDATED' | 'TP' | 'SL';
+	eligibility: EligibilityResult;
 	score: number;
-	classification: 'NO_TRADE' | 'WEAK' | 'VALID' | 'STRONG';
+	classification: SetupClassification;
 	entryZone: { min: number; max: number };
 	entryPrice: number;
 	stopLoss: number;
@@ -31,14 +33,13 @@ export interface TradingSetup {
 }
 
 export interface SMCStrategyConfig {
-	biasTimeframe: '5m';
-	entryTimeframe: '1m';
+	biasTimeframe: typeof DERIVED_BIAS_TIMEFRAME;
+	entryTimeframe: typeof CANONICAL_STRATEGY_TIMEFRAME;
 	swingLeftBars: number;
 	swingRightBars: number;
 	liquidityTolerancePercent: number;
 	atrPeriod: number;
 	displacementATRMultiplier: number;
-	minimumScore: number;
 	minimumRiskReward: number;
 	stopLossATRBuffer: number;
 	maxPendingEntryBars: number;

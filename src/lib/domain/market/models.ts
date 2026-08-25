@@ -1,4 +1,6 @@
-export type Timeframe = '1m' | '5m' | '15m' | '1h';
+import type { Timeframe } from './constants.js';
+
+export type { Timeframe } from './constants.js';
 
 export interface Candle {
 	symbol: string;

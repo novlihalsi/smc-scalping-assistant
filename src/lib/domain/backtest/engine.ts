@@ -4,7 +4,12 @@ import {
 	getTimeframeDurationMilliseconds,
 	type Candle
 } from '../market/index.js';
-import type { SetupReason } from '../scoring/index.js';
+import {
+	classifyQualityScore,
+	QUALITY_SCORE_MAX,
+	QUALITY_SCORE_MIN,
+	type SetupReason
+} from '../scoring/index.js';
 import type { SMCStrategyConfig, TradingSetup } from '../strategy/index.js';
 import type { BacktestInput, BacktestTrade } from './models.js';
 
@@ -47,13 +52,27 @@ export interface OpenBacktestTrade extends PendingBacktestTrade {
 	filledEntry: number;
 }
 
+export interface ExpiredPendingBacktestTrade extends PendingBacktestTrade {
+	status: 'EXPIRED_END_OF_RANGE';
+	expiredAt: number;
+}
+
+export interface CensoredOpenBacktestTrade extends OpenBacktestTrade {
+	status: 'OPEN_END_OF_RANGE';
+	censoredAt: number;
+}
+
 export interface BacktestRunResult<State> {
 	trades: BacktestTrade[];
 	setupEvents: TradingSetup[];
 	pendingTrades: PendingBacktestTrade[];
 	openTrades: OpenBacktestTrade[];
+	expiredPendingTrades: ExpiredPendingBacktestTrade[];
+	censoredOpenTrades: CensoredOpenBacktestTrade[];
 	finalState: State;
 	processedCandles: number;
+	preRollCandles: number;
+	preRollTradesExcluded: number;
 	executionConfig: BacktestExecutionConfig;
 }
 
@@ -112,15 +131,17 @@ export function runBacktest<State>(options: RunBacktestOptions<State>): Backtest
 
 	let domainState = options.pipeline.createInitialState();
 	let processedCandles = 0;
+	let preRollCandles = 0;
 	const pendingTrades = new Map<string, PendingTradeState>();
 	const openTrades = new Map<string, OpenTradeState>();
 	const closedSetupIds = new Set<string>();
-	const trades: BacktestTrade[] = [];
+	const allTrades: BacktestTrade[] = [];
 	const setupEvents: TradingSetup[] = [];
 
 	for (const candle of candles) {
+		if (candle.openTimestamp < options.input.startDate) preRollCandles += 1;
 		if (candle.timeframe === options.input.config.entryTimeframe) {
-			processExistingOpenTrades(candle, openTrades, closedSetupIds, trades, executionConfig);
+			processExistingOpenTrades(candle, openTrades, closedSetupIds, allTrades, executionConfig);
 		}
 
 		const processingResult = options.pipeline.processClosedCandle(
@@ -139,19 +160,41 @@ export function runBacktest<State>(options: RunBacktestOptions<State>): Backtest
 				pendingTrades,
 				openTrades,
 				closedSetupIds,
-				trades,
+				allTrades,
 				executionConfig
 			);
 		}
 	}
+	const rangeEndTimestamp =
+		options.input.endDate +
+		getTimeframeDurationMilliseconds(options.input.config.entryTimeframe) -
+		1;
+	const trades = allTrades.filter(
+		({ entryTimestamp }) => entryTimestamp >= options.input.startDate
+	);
+	const expiredPendingTrades = [...pendingTrades.values()].map((trade) =>
+		toExpiredPendingTrade(trade, rangeEndTimestamp)
+	);
+	const preRollOpenTradesExcluded = [...openTrades.values()].filter(
+		({ entryTimestamp }) => entryTimestamp < options.input.startDate
+	).length;
+	const censoredOpenTrades = [...openTrades.values()]
+		.filter(({ entryTimestamp }) => entryTimestamp >= options.input.startDate)
+		.map((trade) => toCensoredOpenTrade(trade, rangeEndTimestamp));
+	pendingTrades.clear();
+	openTrades.clear();
 
 	return {
 		trades,
 		setupEvents,
-		pendingTrades: [...pendingTrades.values()].map(toPendingTrade),
-		openTrades: [...openTrades.values()].map(toOpenTrade),
+		pendingTrades: [],
+		openTrades: [],
+		expiredPendingTrades,
+		censoredOpenTrades,
 		finalState: domainState,
 		processedCandles,
+		preRollCandles,
+		preRollTradesExcluded: allTrades.length - trades.length + preRollOpenTradesExcluded,
 		executionConfig: { ...executionConfig }
 	};
 }
@@ -160,6 +203,10 @@ function cloneSetup(setup: TradingSetup): TradingSetup {
 	return {
 		...setup,
 		entryZone: { ...setup.entryZone },
+		eligibility: {
+			...setup.eligibility,
+			failures: setup.eligibility.failures.map((failure) => ({ ...failure }))
+		},
 		reasons: setup.reasons.map((reason) => ({ ...reason })),
 		sourceEventIds: [...setup.sourceEventIds],
 		dependencies: { ...setup.dependencies }
@@ -191,7 +238,7 @@ function prepareCandles(candles: readonly Candle[], input: BacktestInput): Candl
 		}
 		seen.add(identity);
 
-		if (candle.openTimestamp >= input.startDate && candle.openTimestamp <= input.endDate) {
+		if (candle.openTimestamp <= input.endDate) {
 			prepared.push({ ...candle });
 		}
 	}
@@ -418,8 +465,25 @@ function validateSetup(setup: TradingSetup, candle: Candle): void {
 		Boolean(setup.dependencies.sweepId) &&
 		Boolean(setup.dependencies.structureBreakId) &&
 		Boolean(setup.dependencies.displacementId);
-	if (!setup.id || !validNumbers || !validGeometry || !validDependencies) {
-		throw new BacktestError('INVALID_SETUP', `Setup ${setup.id} has invalid trade geometry.`);
+	const validEligibility = setup.eligibility.eligible && setup.eligibility.failures.length === 0;
+	const validQuality =
+		setup.score >= QUALITY_SCORE_MIN &&
+		setup.score <= QUALITY_SCORE_MAX &&
+		setup.classification === classifyQualityScore(setup.score) &&
+		setup.reasons.length === 7 &&
+		setup.reasons.reduce((total, reason) => total + reason.score, 0) === setup.score;
+	if (
+		!setup.id ||
+		!validNumbers ||
+		!validGeometry ||
+		!validDependencies ||
+		!validEligibility ||
+		!validQuality
+	) {
+		throw new BacktestError(
+			'INVALID_SETUP',
+			`Setup ${setup.id} has invalid eligibility, quality, dependencies, or trade geometry.`
+		);
 	}
 }
 
@@ -435,12 +499,15 @@ function validatePipelineResult<State>(
 }
 
 function validateBacktestInput(input: BacktestInput): void {
+	const rangeEndTimestamp =
+		input.endDate + getTimeframeDurationMilliseconds(input.config.entryTimeframe) - 1;
 	if (
 		!input.symbol ||
 		!Number.isSafeInteger(input.startDate) ||
 		input.startDate < 0 ||
 		!Number.isSafeInteger(input.endDate) ||
-		input.endDate < input.startDate
+		input.endDate < input.startDate ||
+		!Number.isSafeInteger(rangeEndTimestamp)
 	) {
 		throw new BacktestError('INVALID_INPUT', 'Backtest symbol and date range are invalid.');
 	}
@@ -517,5 +584,24 @@ function toOpenTrade(trade: OpenTradeState): OpenBacktestTrade {
 		id: trade.id,
 		entryTimestamp: trade.entryTimestamp,
 		filledEntry: trade.filledEntry
+	};
+}
+
+function toExpiredPendingTrade(
+	trade: PendingTradeState,
+	expiredAt: number
+): ExpiredPendingBacktestTrade {
+	return {
+		...toPendingTrade(trade),
+		status: 'EXPIRED_END_OF_RANGE',
+		expiredAt
+	};
+}
+
+function toCensoredOpenTrade(trade: OpenTradeState, censoredAt: number): CensoredOpenBacktestTrade {
+	return {
+		...toOpenTrade(trade),
+		status: 'OPEN_END_OF_RANGE',
+		censoredAt
 	};
 }

@@ -13,6 +13,7 @@ import {
 	type ClosedCandlePipeline,
 	type RunBacktestOptions
 } from './engine.js';
+import { analyzeBacktest } from './analytics.js';
 
 function candle(
 	openTimestamp: number,
@@ -43,22 +44,21 @@ function setup(timestamp: number, overrides: Partial<TradingSetup> = {}): Tradin
 		updatedAt: timestamp,
 		direction: 'LONG',
 		status: 'VALID',
+		eligibility: { eligible: true, failures: [] },
 		score: 80,
-		classification: 'VALID',
+		classification: 'STRONG',
 		entryZone: { min: 99, max: 101 },
 		entryPrice: 100,
 		stopLoss: 90,
 		takeProfit: 110,
 		riskReward: 1,
-		reasons: [
-			{
-				key: 'test',
-				label: 'Test setup',
-				score: 80,
-				valid: true,
-				description: 'Deterministic test setup.'
-			}
-		],
+		reasons: Array.from({ length: 7 }, (_, index) => ({
+			key: `quality-${index}`,
+			label: `Quality ${index}`,
+			score: index === 0 ? 80 : 0,
+			valid: index === 0,
+			description: 'Deterministic quality fixture.'
+		})),
 		sourceEventIds: ['event-1'],
 		dependencies: {
 			fvgId: 'fvg-1',
@@ -168,8 +168,12 @@ describe('backtesting engine', () => {
 		);
 
 		expect(result.trades).toEqual([]);
-		expect(result.openTrades).toEqual([
-			expect.objectContaining({ entryTimestamp: nextEntryCandle.closeTimestamp })
+		expect(result.openTrades).toEqual([]);
+		expect(result.censoredOpenTrades).toEqual([
+			expect.objectContaining({
+				entryTimestamp: nextEntryCandle.closeTimestamp,
+				status: 'OPEN_END_OF_RANGE'
+			})
 		]);
 	});
 
@@ -284,6 +288,34 @@ describe('backtesting engine', () => {
 		);
 	});
 
+	it('rejects ineligible pipeline output instead of treating it as a low-score setup', () => {
+		const first = candle(0);
+		const pipeline: ClosedCandlePipeline<null> = {
+			createInitialState: () => null,
+			processClosedCandle: (state, current) => ({
+				state,
+				setups: [
+					setup(current.closeTimestamp, {
+						eligibility: {
+							eligible: false,
+							failures: [
+								{
+									key: 'causalFvg',
+									label: 'Causal Fair Value Gap',
+									description: 'Mandatory eligibility failure.'
+								}
+							]
+						}
+					})
+				]
+			})
+		};
+
+		expect(() => runBacktest(baseOptions([first], pipeline))).toThrowError(
+			expect.objectContaining<Partial<BacktestError>>({ code: 'INVALID_SETUP' })
+		);
+	});
+
 	it('produces identical output for identical inputs', () => {
 		const source = [candle(60_000), candle(0)];
 		const pipeline: ClosedCandlePipeline<number> = {
@@ -322,5 +354,118 @@ describe('backtesting engine', () => {
 		});
 		expect(forward.finalState.pipeline.processedCandles).toBe(12);
 		expect(forward.finalState.derivedFiveMinuteCandles).toBe(2);
+	});
+
+	it('warms canonical 1m and derived 5m state with pre-roll candles', () => {
+		const highs = [101, 102, 110, 103, 102, 104, 105, 106, 107, 108];
+		const source = highs.map((high, minute) => candle(minute * 60_000, '1m', { high, close: 100 }));
+		const options = baseOptions(source, createCanonicalMinutePipeline(DEFAULT_SMC_STRATEGY_CONFIG));
+
+		const result = runBacktest({
+			...options,
+			input: { ...options.input, startDate: 300_000, endDate: 540_000 }
+		});
+
+		expect(result.preRollCandles).toBe(5);
+		expect(result.finalState.pipeline.timeframes['1m'].processedCandles).toBe(10);
+		expect(result.finalState.pipeline.timeframes['1m'].atr.processedCandles).toBe(10);
+		expect(result.finalState.pipeline.timeframes['1m'].marketStructure.lastProcessedTimestamp).toBe(
+			source[4]?.closeTimestamp
+		);
+		expect(result.finalState.pipeline.timeframes['1m'].liquidity.lastSweepProcessedTimestamp).toBe(
+			source[9]?.closeTimestamp
+		);
+		expect(result.finalState.pipeline.timeframes['5m'].processedCandles).toBe(2);
+		expect(result.finalState.pipeline.timeframes['5m'].atr.processedCandles).toBe(2);
+		expect(result.finalState.pipeline.timeframes['5m'].recentCandles).toHaveLength(2);
+	});
+
+	it('excludes a trade entered during pre-roll even when it exits inside the requested range', () => {
+		const preRollSetup = candle(0, '1m', { open: 103, high: 105, low: 102, close: 104 });
+		const preRollEntry = candle(60_000, '1m', { open: 105, high: 109, low: 99, close: 105 });
+		const inRangeTarget = candle(120_000, '1m', {
+			open: 105,
+			high: 111,
+			low: 104,
+			close: 110
+		});
+		const pipeline: ClosedCandlePipeline<number> = {
+			createInitialState: () => 0,
+			processClosedCandle: (state, current) => ({
+				state: state + 1,
+				setups: state === 0 ? [setup(current.closeTimestamp)] : []
+			})
+		};
+		const options = baseOptions([preRollSetup, preRollEntry, inRangeTarget], pipeline);
+
+		const result = runBacktest({
+			...options,
+			input: { ...options.input, startDate: 120_000, endDate: 120_000 }
+		});
+
+		expect(result.finalState).toBe(3);
+		expect(result.preRollCandles).toBe(2);
+		expect(result.trades).toEqual([]);
+		expect(result.preRollTradesExcluded).toBe(1);
+		expect(analyzeBacktest(result.trades).metrics.totalTrades).toBe(0);
+	});
+
+	it('expires a pending setup explicitly at the end of the requested range', () => {
+		const finalCandle = candle(0);
+		const pipeline: ClosedCandlePipeline<number> = {
+			createInitialState: () => 0,
+			processClosedCandle: (state, current) => ({
+				state: state + 1,
+				setups: [setup(current.closeTimestamp)]
+			})
+		};
+		const options = baseOptions([finalCandle], pipeline);
+
+		const result = runBacktest({
+			...options,
+			input: { ...options.input, endDate: 0 }
+		});
+
+		expect(result.pendingTrades).toEqual([]);
+		expect(result.expiredPendingTrades).toEqual([
+			expect.objectContaining({
+				setupId: 'setup-1',
+				status: 'EXPIRED_END_OF_RANGE',
+				expiredAt: finalCandle.closeTimestamp
+			})
+		]);
+	});
+
+	it('right-censors an open trade without adding a realized win or loss', () => {
+		const setupCandle = candle(0, '1m', { open: 103, high: 105, low: 102, close: 104 });
+		const entryCandle = candle(60_000, '1m', { open: 103, high: 105, low: 99, close: 104 });
+		const pipeline: ClosedCandlePipeline<number> = {
+			createInitialState: () => 0,
+			processClosedCandle: (state, current) => ({
+				state: state + 1,
+				setups: state === 0 ? [setup(current.closeTimestamp)] : []
+			})
+		};
+		const options = baseOptions([setupCandle, entryCandle], pipeline);
+
+		const result = runBacktest({
+			...options,
+			input: { ...options.input, endDate: 60_000 }
+		});
+
+		expect(result.trades).toEqual([]);
+		expect(result.openTrades).toEqual([]);
+		expect(result.censoredOpenTrades).toEqual([
+			expect.objectContaining({
+				setupId: 'setup-1',
+				status: 'OPEN_END_OF_RANGE',
+				censoredAt: entryCandle.closeTimestamp
+			})
+		]);
+		expect(analyzeBacktest(result.trades).metrics).toMatchObject({
+			totalTrades: 0,
+			wins: 0,
+			losses: 0
+		});
 	});
 });

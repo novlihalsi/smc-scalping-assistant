@@ -123,6 +123,7 @@ const tradingSetup: TradingSetup = {
 	updatedAt: timestamp + 420_000,
 	direction: 'LONG',
 	status: 'VALID',
+	eligibility: { eligible: true, failures: [] },
 	score: 75,
 	classification: 'VALID',
 	entryZone: { min: fairValueGap.bottom, max: fairValueGap.top },
@@ -217,7 +218,6 @@ describe('core domain models', () => {
 			liquidityTolerancePercent: 0.1,
 			atrPeriod: 14,
 			displacementATRMultiplier: 1.2,
-			minimumScore: 75,
 			minimumRiskReward: 1.5,
 			stopLossATRBuffer: 0.1,
 			maxPendingEntryBars: 10

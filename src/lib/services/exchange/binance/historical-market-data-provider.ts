@@ -1,18 +1,18 @@
-import type { Candle } from '../../../domain/market/index.js';
+import {
+	CANONICAL_STRATEGY_TIMEFRAME,
+	DERIVED_BIAS_TIMEFRAME,
+	getTimeframeDurationMilliseconds,
+	PRIMARY_MARKET_SYMBOL,
+	type Candle
+} from '../../../domain/market/index.js';
 import {
 	HistoricalMarketDataError,
 	type HistoricalCandlesRequest,
-	type HistoricalMarketDataProvider,
-	type HistoricalTimeframe
+	type HistoricalMarketDataProvider
 } from '../../historical/index.js';
 
 const DEFAULT_BASE_URL = 'https://data-api.binance.vision';
 const DEFAULT_PAGE_LIMIT = 1_000;
-
-const INTERVAL_MILLISECONDS: Record<HistoricalTimeframe, number> = {
-	'1m': 60_000,
-	'5m': 300_000
-};
 
 export interface BinanceHistoricalMarketDataProviderOptions {
 	baseUrl?: string;
@@ -45,7 +45,7 @@ export class BinanceHistoricalMarketDataProvider implements HistoricalMarketData
 		validateRequest(request);
 
 		const requestedAt = this.#now();
-		const intervalMilliseconds = INTERVAL_MILLISECONDS[request.timeframe];
+		const intervalMilliseconds = getTimeframeDurationMilliseconds(request.timeframe);
 		const candlesByOpenTimestamp = new Map<number, Candle>();
 		let cursor = request.startTimestamp;
 
@@ -71,6 +71,12 @@ export class BinanceHistoricalMarketDataProvider implements HistoricalMarketData
 					candle.openTimestamp >= request.startTimestamp &&
 					candle.openTimestamp <= request.endTimestamp
 				) {
+					if (candlesByOpenTimestamp.has(candle.openTimestamp)) {
+						throw new HistoricalMarketDataError(
+							'DUPLICATE_CANDLE',
+							`Binance returned duplicate ${request.timeframe} candle at ${candle.openTimestamp}.`
+						);
+					}
 					candlesByOpenTimestamp.set(candle.openTimestamp, candle);
 				}
 			}
@@ -147,14 +153,17 @@ export class BinanceHistoricalMarketDataProvider implements HistoricalMarketData
 }
 
 function validateRequest(request: HistoricalCandlesRequest): void {
-	if (request.symbol !== 'BTCUSDT') {
+	if (request.symbol !== PRIMARY_MARKET_SYMBOL) {
 		throw new HistoricalMarketDataError(
 			'INVALID_REQUEST',
 			`Unsupported historical symbol: ${String(request.symbol)}.`
 		);
 	}
 
-	if (request.timeframe !== '1m' && request.timeframe !== '5m') {
+	if (
+		request.timeframe !== CANONICAL_STRATEGY_TIMEFRAME &&
+		request.timeframe !== DERIVED_BIAS_TIMEFRAME
+	) {
 		throw new HistoricalMarketDataError(
 			'INVALID_REQUEST',
 			`Unsupported historical timeframe: ${String(request.timeframe)}.`
