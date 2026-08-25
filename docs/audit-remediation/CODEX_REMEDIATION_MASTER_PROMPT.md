@@ -1,6 +1,7 @@
 # Codex Remediation Master Prompt
 
 Read:
+
 - `docs/audit-remediation/AUDIT_DECISIONS.md`
 - `docs/audit-remediation/REMEDIATION_ARCHITECTURE.md`
 - `docs/audit-remediation/REGRESSION_TEST_SPEC.md`
@@ -10,6 +11,7 @@ Read:
 Priority: correctness, deterministic behavior, and historical/realtime parity.
 
 Rules:
+
 - one audit fix at a time;
 - no realtime feature implementation yet;
 - no live trading;

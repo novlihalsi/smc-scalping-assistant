@@ -20,6 +20,14 @@ import { runCanonicalReplayParity } from './parity-harness.js';
 type FixtureDirection = TradingSetup['direction'];
 
 const parityConfig = { ...DEFAULT_SMC_STRATEGY_CONFIG, atrPeriod: 1 };
+const emptyStateParityConfig = {
+	...DEFAULT_SMC_STRATEGY_CONFIG,
+	swingLeftBars: 1,
+	swingRightBars: 1,
+	atrPeriod: 1,
+	displacementATRMultiplier: 0.1,
+	minimumRiskReward: 0.1
+};
 
 function minuteCandle(
 	minute: number,
@@ -49,6 +57,52 @@ function setupSequence(direction: FixtureDirection): readonly Candle[] {
 				minuteCandle(9, { open: 106, high: 107, low: 98, close: 99 }),
 				minuteCandle(10, { open: 101, high: 102, low: 96, close: 97 })
 			];
+}
+
+function emptyStateFixture(
+	direction: FixtureDirection,
+	terminal: 'WIN' | 'INVALIDATED' = 'WIN'
+): readonly Candle[] {
+	const fiveMinuteBars = [
+		{ open: 100, high: 105, low: 95, close: 100 },
+		{ open: 100, high: 120, low: 90, close: 110 },
+		{ open: 110, high: 112, low: 70, close: 80 },
+		{ open: 90, high: 130, low: 85, close: 120 },
+		{ open: 115, high: 118, low: 80, close: 100 },
+		{ open: 100, high: 135, low: 90, close: 132 }
+	];
+	const warmup = fiveMinuteBars.flatMap((values, bucket) =>
+		Array.from({ length: 5 }, (_, offset) => minuteCandle(bucket * 5 + offset, values))
+	);
+	const sequence = [
+		minuteCandle(30, { open: 100, high: 110, low: 98, close: 105 }),
+		minuteCandle(31, { open: 105, high: 115, low: 102, close: 110 }),
+		minuteCandle(32, { open: 110, high: 111, low: 95, close: 100 }),
+		minuteCandle(33, { open: 100, high: 112, low: 99, close: 108 }),
+		minuteCandle(34, { open: 108, high: 109, low: 90, close: 94 }),
+		minuteCandle(35, { open: 94, high: 108, low: 94, close: 100 }),
+		minuteCandle(36, { open: 100, high: 105, low: 89, close: 92 }),
+		minuteCandle(37, { open: 100, high: 116, low: 99, close: 114 }),
+		minuteCandle(38, { open: 114, high: 125, low: 113, close: 124 }),
+		minuteCandle(39, { open: 124, high: 126, low: 117, close: 125 }),
+		terminal === 'WIN'
+			? minuteCandle(40, { open: 125, high: 126, low: 116.5, close: 120 })
+			: minuteCandle(40, { open: 125, high: 126, low: 70, close: 75 }),
+		minuteCandle(41, { open: 120, high: 200, low: 119, close: 190 })
+	];
+	const bullish = [...warmup, ...sequence];
+	return direction === 'LONG' ? bullish : bullish.map(mirrorCandle);
+}
+
+function mirrorCandle(candle: Candle): Candle {
+	const pivot = 300;
+	return {
+		...candle,
+		open: pivot - candle.open,
+		high: pivot - candle.low,
+		low: pivot - candle.high,
+		close: pivot - candle.close
+	};
 }
 
 function createSetupCheckpoint(
@@ -222,6 +276,85 @@ function parityOptions(
 
 describe('historical and realtime-style canonical replay parity', () => {
 	it.each(['LONG', 'SHORT'] as const)(
+		'matches an empty-state %s fixture through setup and realized trade',
+		(direction) => {
+			const candles = emptyStateFixture(direction);
+			const result = runCanonicalReplayParity({
+				input: {
+					symbol: 'BTCUSDT',
+					startDate: 0,
+					endDate: candles.at(-1)!.openTimestamp,
+					config: emptyStateParityConfig
+				},
+				candles
+			});
+
+			expect(result.comparison.matches).toBe(true);
+			expect(result.historical.setupLifecycle.map(({ status }) => status)).toEqual([
+				'VALID',
+				'TRIGGERED'
+			]);
+			expect(result.historical.trades).toEqual([
+				expect.objectContaining({ direction, result: 'WIN', exitReason: 'TAKE_PROFIT' })
+			]);
+			expect(result.historical.finalState.processedOneMinuteCandles).toBe(candles.length);
+		}
+	);
+
+	it.each(['LONG', 'SHORT'] as const)(
+		'matches an empty-state %s protected-structure invalidation fixture',
+		(direction) => {
+			const candles = emptyStateFixture(direction, 'INVALIDATED').slice(0, -1);
+			const result = runCanonicalReplayParity({
+				input: {
+					symbol: 'BTCUSDT',
+					startDate: 0,
+					endDate: candles.at(-1)!.openTimestamp,
+					config: emptyStateParityConfig
+				},
+				candles
+			});
+
+			expect(result.comparison.matches).toBe(true);
+			expect(result.historical.setupLifecycle.at(-1)).toMatchObject({
+				status: 'INVALIDATED',
+				invalidationReason:
+					direction === 'LONG' ? 'PROTECTED_LOW_BREACHED' : 'PROTECTED_HIGH_BREACHED'
+			});
+			expect(result.historical.trades).toEqual([]);
+		}
+	);
+
+	it('produces the same canonical result for clean and duplicate/reversed WS delivery', () => {
+		const candles = emptyStateFixture('LONG');
+		const options = {
+			input: {
+				symbol: 'BTCUSDT',
+				startDate: 0,
+				endDate: candles.at(-1)!.openTimestamp,
+				config: emptyStateParityConfig
+			},
+			candles
+		};
+		const clean = runCanonicalReplayParity({
+			...options,
+			realtimeDelivery: {
+				reverseFinalizedWebSocketDelivery: false,
+				duplicateFinalizedWebSocketDelivery: false
+			}
+		});
+		const noisy = runCanonicalReplayParity(options);
+
+		expect(noisy.realtimeStyle).toEqual(clean.realtimeStyle);
+		expect(noisy.realtimeIngestion.finalizedCandles).toEqual(
+			clean.realtimeIngestion.finalizedCandles
+		);
+		expect(clean.realtimeIngestion.duplicateFinalDeliveries).toBe(0);
+		expect(noisy.realtimeIngestion.duplicateFinalDeliveries).toBeGreaterThan(0);
+		expect(noisy.comparison.matches).toBe(true);
+	});
+
+	it.each(['LONG', 'SHORT'] as const)(
 		'produces an identical successful %s setup lifecycle and trade',
 		(direction) => {
 			const fixture = createSetupCheckpoint(direction);
@@ -248,6 +381,14 @@ describe('historical and realtime-style canonical replay parity', () => {
 				'DERIVED_BIAS_CANDLE',
 				'CANONICAL_MINUTE_CANDLE'
 			]);
+			expect(result.realtimeIngestion).toMatchObject({
+				phase: 'STREAMING',
+				finalizedCandles: continuation(direction),
+				bufferedFinalCandles: [],
+				openCandles: [],
+				openCandleUpdates: 2,
+				duplicateFinalDeliveries: 2
+			});
 		}
 	);
 
@@ -323,6 +464,90 @@ describe('historical and realtime-style canonical replay parity', () => {
 		});
 		expect(result.historical.trades).toEqual([]);
 		expect(result.historical.censoredOpenTrades).toEqual([]);
+	});
+
+	it('terminalizes a pending EOR setup in canonical state and prevents a resumed zombie trigger', () => {
+		const fixture = createSetupCheckpoint('LONG');
+		const setupOnly = continuation('LONG').slice(0, 1);
+		const result = runCanonicalReplayParity(parityOptions(fixture.state, setupOnly));
+		const terminalSetup = result.historical.setupLifecycle.at(-1)!;
+		const expiredTrade = result.historical.expiredPendingTrades[0]!;
+
+		expect(result.comparison.matches).toBe(true);
+		expect(result.historical.setupLifecycle.map(({ status }) => status)).toEqual([
+			'VALID',
+			'EXPIRED_END_OF_RANGE'
+		]);
+		expect(expiredTrade).toMatchObject({
+			setupId: terminalSetup.id,
+			status: 'EXPIRED_END_OF_RANGE'
+		});
+		expect(result.historical.finalState.pipeline).toMatchObject({
+			activeSetupId: null,
+			strategy: { stage: 'WAITING_FOR_SWEEP' },
+			sequence: { id: null, fvgId: null }
+		});
+		expect(
+			result.historical.finalState.pipeline.setupRegistry.find(({ id }) => id === terminalSetup.id)
+		).toMatchObject({
+			id: expiredTrade.setupId,
+			status: 'EXPIRED_END_OF_RANGE',
+			updatedAt: expiredTrade.expiredAt
+		});
+
+		const resumedCandle = continuation('LONG')[1]!;
+		const resumed = runCanonicalReplayParity(
+			parityOptions(result.historical.finalState, [resumedCandle])
+		);
+		expect(resumed.comparison.matches).toBe(true);
+		expect(resumed.historical.setupLifecycle).toEqual([]);
+		expect(resumed.historical.trades).toEqual([]);
+		expect(
+			resumed.historical.finalState.pipeline.setupRegistry.find(({ id }) => id === terminalSetup.id)
+		).toMatchObject({ status: 'EXPIRED_END_OF_RANGE' });
+	});
+
+	it('terminalizes an open EOR setup/trade and prevents a resumed zombie exit', () => {
+		const fixture = createSetupCheckpoint('LONG');
+		const throughEntry = continuation('LONG').slice(0, 2);
+		const result = runCanonicalReplayParity(parityOptions(fixture.state, throughEntry));
+		const terminalSetup = result.historical.setupLifecycle.at(-1)!;
+		const censoredTrade = result.historical.censoredOpenTrades[0]!;
+
+		expect(result.comparison.matches).toBe(true);
+		expect(result.historical.setupLifecycle.map(({ status }) => status)).toEqual([
+			'VALID',
+			'TRIGGERED',
+			'OPEN_END_OF_RANGE'
+		]);
+		expect(censoredTrade).toMatchObject({
+			setupId: terminalSetup.id,
+			status: 'OPEN_END_OF_RANGE'
+		});
+		expect(result.historical.expiredPendingTrades).toEqual([]);
+		expect(result.historical.finalState.pipeline).toMatchObject({
+			activeSetupId: null,
+			strategy: { stage: 'WAITING_FOR_SWEEP' },
+			sequence: { id: null, fvgId: null }
+		});
+		expect(
+			result.historical.finalState.pipeline.setupRegistry.find(({ id }) => id === terminalSetup.id)
+		).toMatchObject({
+			id: censoredTrade.setupId,
+			status: 'OPEN_END_OF_RANGE',
+			updatedAt: censoredTrade.censoredAt
+		});
+
+		const targetCandle = continuation('LONG')[2]!;
+		const resumed = runCanonicalReplayParity(
+			parityOptions(result.historical.finalState, [targetCandle])
+		);
+		expect(resumed.comparison.matches).toBe(true);
+		expect(resumed.historical.setupLifecycle).toEqual([]);
+		expect(resumed.historical.trades).toEqual([]);
+		expect(
+			resumed.historical.finalState.pipeline.setupRegistry.find(({ id }) => id === terminalSetup.id)
+		).toMatchObject({ status: 'OPEN_END_OF_RANGE' });
 	});
 
 	it('fails fast on a missing canonical minute without mutating the replay checkpoint', () => {

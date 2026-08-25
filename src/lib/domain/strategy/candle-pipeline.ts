@@ -86,6 +86,12 @@ export interface SMCClosedCandlePipelineState {
 	lastProcessedTimestamp: number | null;
 }
 
+export interface SMCSetupEndOfRangeTerminalization {
+	timestamp: number;
+	expiredPendingSetupIds: readonly string[];
+	openSetupIds: readonly string[];
+}
+
 interface TimeframeProcessingEvents {
 	bos: StructureBreak | null;
 	choch: StructureBreak | null;
@@ -119,6 +125,77 @@ export function createSmcClosedCandleState(
 		htfBias: 'NEUTRAL',
 		processedCandles: 0,
 		lastProcessedTimestamp: null
+	};
+}
+
+/** Terminalizes canonical setup state so an end-of-range checkpoint cannot resume it. */
+export function terminalizeSmcSetupsAtEndOfRange(
+	state: SMCClosedCandlePipelineState,
+	terminalization: SMCSetupEndOfRangeTerminalization
+): { state: SMCClosedCandlePipelineState; setups: readonly TradingSetup[] } {
+	if (!Number.isSafeInteger(terminalization.timestamp) || terminalization.timestamp < 0) {
+		throw new RangeError('Setup end-of-range timestamp must be a non-negative safe integer.');
+	}
+	const expiredIds = new Set(terminalization.expiredPendingSetupIds);
+	const openIds = new Set(terminalization.openSetupIds);
+	for (const id of expiredIds) {
+		if (openIds.has(id)) {
+			throw new RangeError(`Setup ${id} cannot be both pending and open at end-of-range.`);
+		}
+	}
+	const requestedIds = new Set([...expiredIds, ...openIds]);
+	if (requestedIds.size === 0) return { state, setups: [] };
+
+	const terminalized: TradingSetup[] = [];
+	const setupRegistry = state.setupRegistry.map((setup) => {
+		const status = expiredIds.has(setup.id)
+			? ('EXPIRED_END_OF_RANGE' as const)
+			: openIds.has(setup.id)
+				? ('OPEN_END_OF_RANGE' as const)
+				: null;
+		if (status === null) return setup;
+		if (terminalization.timestamp < setup.updatedAt) {
+			throw new RangeError(`Setup ${setup.id} cannot terminalize before its latest update.`);
+		}
+		if (setup.status === 'EXPIRED_END_OF_RANGE' || setup.status === 'OPEN_END_OF_RANGE') {
+			if (setup.status !== status) {
+				throw new RangeError(`Setup ${setup.id} has a conflicting end-of-range status.`);
+			}
+			requestedIds.delete(setup.id);
+			return setup;
+		}
+		if (setup.status !== 'VALID' && setup.status !== 'TRIGGERED') {
+			throw new RangeError(`Setup ${setup.id} is not live at end-of-range.`);
+		}
+
+		const next: TradingSetup = {
+			...setup,
+			status,
+			updatedAt: terminalization.timestamp,
+			...(status === 'EXPIRED_END_OF_RANGE' ? { invalidationReason: 'EXPIRED_END_OF_RANGE' } : {})
+		};
+		terminalized.push(next);
+		requestedIds.delete(setup.id);
+		return next;
+	});
+	if (requestedIds.size > 0) {
+		throw new RangeError(`Missing canonical setup ${[...requestedIds].sort()[0]} at end-of-range.`);
+	}
+	if (terminalized.length === 0) return { state, setups: [] };
+
+	const referenceSetup = terminalized[0]!;
+	return {
+		state: {
+			...state,
+			setupRegistry,
+			activeSetupId: null,
+			strategy: restartStrategy(state.htfBias, {
+				symbol: referenceSetup.symbol,
+				closeTimestamp: terminalization.timestamp
+			}),
+			sequence: emptySequence()
+		},
+		setups: terminalized
 	};
 }
 
@@ -679,7 +756,10 @@ function findRelevantOrderBlock(
 	);
 }
 
-function restartStrategy(bias: MarketBias, candle: Candle): StrategyState {
+function restartStrategy(
+	bias: MarketBias,
+	candle: Pick<Candle, 'symbol' | 'closeTimestamp'>
+): StrategyState {
 	const initial = createStrategyState();
 	if (bias === 'NEUTRAL') return initial;
 	return processStrategySignal(initial, {

@@ -14,7 +14,6 @@ export type StrategyStage =
 	| 'WAITING_FOR_DISPLACEMENT'
 	| 'WAITING_FOR_FVG'
 	| 'WAITING_FOR_RETRACEMENT'
-	| 'READY'
 	| 'INVALIDATED';
 
 interface BaseStrategySignal {
@@ -53,13 +52,6 @@ export interface FvgSignal extends BaseStrategySignal {
 	gap: FairValueGap;
 }
 
-export interface RetracementSignal extends BaseStrategySignal {
-	type: 'RETRACEMENT';
-	timeframe: typeof CANONICAL_STRATEGY_TIMEFRAME;
-	fvg: FairValueGap;
-	price: number;
-}
-
 export interface InvalidationSignal extends BaseStrategySignal {
 	type: 'INVALIDATE';
 	reason: string;
@@ -71,7 +63,6 @@ export type StrategySignal =
 	| ChochSignal
 	| DisplacementSignal
 	| FvgSignal
-	| RetracementSignal
 	| InvalidationSignal;
 
 export interface StrategyState {
@@ -132,7 +123,7 @@ export function processStrategySignal(
 	if (signal.type === 'INVALIDATE') return invalidate(state, signal, signal.reason);
 
 	const baseState = recordProcessedSignal(state, signal);
-	if (state.stage === 'INVALIDATED' || state.stage === 'READY' || state.direction === null) {
+	if (state.stage === 'INVALIDATED' || state.direction === null) {
 		return { state: baseState, transition: null };
 	}
 
@@ -174,20 +165,6 @@ export function processStrategySignal(
 		) {
 			const next = transition(baseState, signal, 'WAITING_FOR_RETRACEMENT');
 			return { ...next, state: { ...next.state, activeFvgId: signal.gap.id } };
-		}
-	}
-
-	if (signal.type === 'RETRACEMENT' && state.stage === 'WAITING_FOR_RETRACEMENT') {
-		if (
-			state.activeFvgId === signal.fvg.id &&
-			signal.fvg.state !== 'FILLED' &&
-			signal.fvg.createdAt < signal.timestamp &&
-			signal.fvg.lastUpdatedAt <= signal.timestamp &&
-			Number.isFinite(signal.price) &&
-			signal.price >= signal.fvg.bottom &&
-			signal.price <= signal.fvg.top
-		) {
-			return transition(baseState, signal, 'READY');
 		}
 	}
 

@@ -3,26 +3,19 @@ export {
 	CanonicalMinutePipelineError,
 	createCanonicalMinutePipeline,
 	createCanonicalMinutePipelineState,
-	processCanonicalMinute
+	processCanonicalMinute,
+	terminalizeCanonicalMinuteAtEndOfRange
 } from './canonical-minute-pipeline.js';
 export type {
+	CanonicalMinuteEndOfRangeTerminalization,
 	CanonicalMinutePipelineErrorCode,
 	CanonicalMinutePipelineState,
 	CanonicalMinuteProcessingResult
 } from './canonical-minute-pipeline.js';
 export type { SetupDependencies, SMCStrategyConfig, TradingSetup } from './models.js';
-export { createStrategyState, processStrategySignal, StrategyStateError } from './state-machine.js';
+export { createStrategyState } from './state-machine.js';
 export type {
-	ChochSignal,
-	DisplacementSignal,
-	FvgSignal,
-	HtfBiasSignal,
-	InvalidationSignal,
-	LiquiditySweepSignal,
-	RetracementSignal,
 	StrategyDirection,
-	StrategyProcessingResult,
-	StrategySignal,
 	StrategyStage,
 	StrategyState,
 	StrategyTransition

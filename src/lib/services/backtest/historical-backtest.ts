@@ -19,7 +19,6 @@ import {
 } from '../../domain/index.js';
 import type { HistoricalMarketDataProvider } from '../historical/index.js';
 
-const MAX_SENSITIVITY_BPS = 9_999.99;
 export const DEFAULT_BACKTEST_PRE_ROLL_BARS = 500;
 
 export interface HistoricalBacktestRequest {
@@ -137,14 +136,7 @@ function buildCostSensitivityRuns(
 		{
 			key: 'STRESS_2X',
 			label: 'Cost stress',
-			executionConfig: {
-				feeBps:
-					baselineConfig.feeBps > 0 ? Math.min(baselineConfig.feeBps * 2, MAX_SENSITIVITY_BPS) : 4,
-				slippageBps:
-					baselineConfig.slippageBps > 0
-						? Math.min(baselineConfig.slippageBps * 2, MAX_SENSITIVITY_BPS)
-						: 2
-			}
+			executionConfig: createStressExecutionConfig(baselineConfig)
 		}
 	];
 
@@ -161,6 +153,12 @@ function buildCostSensitivityRuns(
 					}).trades
 				)
 	}));
+}
+
+function createStressExecutionConfig(baseline: BacktestExecutionConfig): BacktestExecutionConfig {
+	return baseline.feeBps === 0 && baseline.slippageBps === 0
+		? { feeBps: 4, slippageBps: 2 }
+		: { feeBps: baseline.feeBps * 2, slippageBps: baseline.slippageBps * 2 };
 }
 
 function sameExecutionConfig(

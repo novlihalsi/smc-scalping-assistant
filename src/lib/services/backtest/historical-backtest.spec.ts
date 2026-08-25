@@ -129,6 +129,41 @@ describe('historical backtest service', () => {
 		).rejects.toMatchObject({ name: 'CandleContinuityError', code });
 	});
 
+	it.each([
+		{
+			name: 'documented fallback when both baseline fields are zero',
+			baseline: { feeBps: 0, slippageBps: 0 },
+			expected: { feeBps: 4, slippageBps: 2 }
+		},
+		{
+			name: 'zero slippage doubled exactly without fallback substitution',
+			baseline: { feeBps: 4, slippageBps: 0 },
+			expected: { feeBps: 8, slippageBps: 0 }
+		},
+		{
+			name: 'zero fee doubled exactly without fallback substitution',
+			baseline: { feeBps: 0, slippageBps: 2 },
+			expected: { feeBps: 0, slippageBps: 4 }
+		},
+		{
+			name: 'fractional configured costs doubled exactly',
+			baseline: { feeBps: 1.25, slippageBps: 0.75 },
+			expected: { feeBps: 2.5, slippageBps: 1.5 }
+		}
+	])('uses $name for 2x cost stress', async ({ baseline, expected }) => {
+		const report = await runHistoricalBacktest(new FixtureProvider(), {
+			symbol: 'BTCUSDT',
+			startTimestamp: 0,
+			endTimestamp: 240_000,
+			config: DEFAULT_SMC_STRATEGY_CONFIG,
+			executionConfig: baseline
+		});
+
+		expect(report.validation.costSensitivity.find(({ key }) => key === 'STRESS_2X')).toMatchObject(
+			expected
+		);
+	});
+
 	it('loads a configurable pre-roll range while preserving the requested report window', async () => {
 		const provider = new RangeFixtureProvider();
 

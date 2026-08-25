@@ -7,6 +7,7 @@ import {
 	createCanonicalMinutePipeline,
 	createCanonicalMinutePipelineState,
 	processCanonicalMinute,
+	terminalizeCanonicalMinuteAtEndOfRange,
 	type CanonicalMinutePipelineState,
 	type SMCStrategyConfig,
 	type TradingSetup
@@ -20,6 +21,10 @@ import {
 	type ExpiredPendingBacktestTrade
 } from './engine.js';
 import type { BacktestInput, BacktestTrade } from './models.js';
+import {
+	InMemoryRealtimeIngestionAdapter,
+	type RealtimeIngestionSnapshot
+} from './realtime-ingestion-adapter.js';
 
 export type CanonicalReplayEventType = 'DERIVED_BIAS_CANDLE' | 'CANONICAL_MINUTE_CANDLE';
 
@@ -51,7 +56,17 @@ export interface CanonicalReplayParityComparison {
 export interface CanonicalReplayParityResult {
 	historical: CanonicalReplayObservation;
 	realtimeStyle: CanonicalReplayObservation;
+	realtimeIngestion: RealtimeIngestionSnapshot;
 	comparison: CanonicalReplayParityComparison;
+}
+
+export interface RealtimeParityDeliveryOptions {
+	/** Number of chronological candles delivered by the REST bootstrap. */
+	bootstrapCandles?: number;
+	/** Reverse finalized WS delivery to exercise out-of-order buffering. Defaults to true. */
+	reverseFinalizedWebSocketDelivery?: boolean;
+	/** Redeliver every finalized WS candle once. Defaults to true. */
+	duplicateFinalizedWebSocketDelivery?: boolean;
 }
 
 export interface RunCanonicalReplayParityOptions {
@@ -60,6 +75,7 @@ export interface RunCanonicalReplayParityOptions {
 	executionConfig?: BacktestExecutionConfig;
 	/** A deterministic replay checkpoint, useful for comparing continuation behavior after warm-up. */
 	initialState?: CanonicalMinutePipelineState;
+	realtimeDelivery?: RealtimeParityDeliveryOptions;
 }
 
 interface ObservedCanonicalState {
@@ -68,9 +84,9 @@ interface ObservedCanonicalState {
 }
 
 /**
- * Compares historical replay with an in-memory realtime-style adapter that accepts one
- * already-closed canonical minute at a time. This is a parity test utility only; it opens
- * no sockets and implements no realtime market-data service.
+ * Compares historical replay with a distinct in-memory realtime ingestion path. The
+ * realtime path models REST bootstrap, open WS snapshots, finalization, duplicate delivery,
+ * and out-of-order delivery before both paths enter the shared canonical strategy engine.
  */
 export function runCanonicalReplayParity(
 	options: RunCanonicalReplayParityOptions
@@ -81,16 +97,79 @@ export function runCanonicalReplayParity(
 		candles,
 		createHistoricalObservedPipeline(options.input.config, options.initialState)
 	);
+	const realtime = ingestRealtimeCandles(options, candles);
 	const realtimeStyleRun = runObservedReplay(
 		options,
-		candles,
+		realtime.candles,
 		createRealtimeStyleObservedPipeline(options.input.config, options.initialState)
 	);
 	const historical = observe(historicalRun);
 	const realtimeStyle = observe(realtimeStyleRun);
 	const comparison = compareObservations(historical, realtimeStyle);
 
-	return { historical, realtimeStyle, comparison };
+	return {
+		historical,
+		realtimeStyle,
+		realtimeIngestion: realtime.snapshot,
+		comparison
+	};
+}
+
+function ingestRealtimeCandles(
+	options: RunCanonicalReplayParityOptions,
+	candles: readonly Candle[]
+): { candles: readonly Candle[]; snapshot: RealtimeIngestionSnapshot } {
+	const requestedBootstrapCount =
+		options.realtimeDelivery?.bootstrapCandles ?? Math.floor(candles.length / 2);
+	if (
+		!Number.isSafeInteger(requestedBootstrapCount) ||
+		requestedBootstrapCount < 0 ||
+		requestedBootstrapCount > candles.length
+	) {
+		throw new RangeError('Realtime parity bootstrap count must fit the canonical candle range.');
+	}
+
+	const expectedStartTimestamp =
+		options.initialState?.lastProcessedMinuteTimestamp !== null &&
+		options.initialState?.lastProcessedMinuteTimestamp !== undefined
+			? options.initialState.lastProcessedMinuteTimestamp + 1
+			: candles[0]?.openTimestamp;
+	const adapter = new InMemoryRealtimeIngestionAdapter({
+		symbol: options.input.symbol,
+		...(expectedStartTimestamp === undefined ? {} : { expectedStartTimestamp })
+	});
+	const bootstrap = candles.slice(0, requestedBootstrapCount);
+	const emitted: Candle[] = [...adapter.ingestRestBootstrap([...bootstrap].reverse())];
+	const webSocketCandles = candles.slice(requestedBootstrapCount);
+
+	for (const candle of [...webSocketCandles].reverse()) {
+		adapter.ingestWebSocketUpdate(createOpenSnapshot(candle));
+	}
+
+	const finalizedDelivery =
+		options.realtimeDelivery?.reverseFinalizedWebSocketDelivery === false
+			? webSocketCandles
+			: [...webSocketCandles].reverse();
+	for (const candle of finalizedDelivery) {
+		emitted.push(...adapter.ingestWebSocketUpdate(candle));
+		if (options.realtimeDelivery?.duplicateFinalizedWebSocketDelivery !== false) {
+			emitted.push(...adapter.ingestWebSocketUpdate({ ...candle }));
+		}
+	}
+
+	adapter.complete();
+	return { candles: emitted, snapshot: adapter.snapshot() };
+}
+
+function createOpenSnapshot(candle: Candle): Candle {
+	return {
+		...candle,
+		high: candle.open,
+		low: candle.open,
+		close: candle.open,
+		volume: 0,
+		closed: false
+	};
 }
 
 function runObservedReplay(
@@ -119,7 +198,12 @@ function createHistoricalObservedPipeline(
 		processClosedCandle: (state, candle, processingConfig) => {
 			const result = historical.processClosedCandle(state.canonical, candle, processingConfig);
 			return recordCanonicalResult(state, candle, result);
-		}
+		},
+		terminalizeEndOfRange: (state, terminalization) =>
+			recordCanonicalTerminalization(
+				state,
+				historical.terminalizeEndOfRange(state.canonical, terminalization)
+			)
 	};
 }
 
@@ -137,6 +221,11 @@ function createRealtimeStyleObservedPipeline(
 				state,
 				candle,
 				processCanonicalMinute(state.canonical, candle, processingConfig)
+			),
+		terminalizeEndOfRange: (state, terminalization) =>
+			recordCanonicalTerminalization(
+				state,
+				terminalizeCanonicalMinuteAtEndOfRange(state.canonical, terminalization)
 			)
 	};
 }
@@ -171,6 +260,19 @@ function recordCanonicalResult(
 			canonical: result.state,
 			normalizedEvents: [...state.normalizedEvents, ...nextEvents]
 		},
+		setups: result.setups
+	};
+}
+
+function recordCanonicalTerminalization(
+	state: ObservedCanonicalState,
+	result: {
+		state: CanonicalMinutePipelineState;
+		setups: readonly TradingSetup[];
+	}
+): { state: ObservedCanonicalState; setups: readonly TradingSetup[] } {
+	return {
+		state: { canonical: result.state, normalizedEvents: state.normalizedEvents },
 		setups: result.setups
 	};
 }

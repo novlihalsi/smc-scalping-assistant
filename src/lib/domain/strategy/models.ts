@@ -19,7 +19,15 @@ export interface TradingSetup {
 	createdAt: number;
 	updatedAt: number;
 	direction: 'LONG' | 'SHORT';
-	status: 'FORMING' | 'VALID' | 'TRIGGERED' | 'INVALIDATED' | 'TP' | 'SL';
+	status:
+		| 'FORMING'
+		| 'VALID'
+		| 'TRIGGERED'
+		| 'INVALIDATED'
+		| 'TP'
+		| 'SL'
+		| 'EXPIRED_END_OF_RANGE'
+		| 'OPEN_END_OF_RANGE';
 	eligibility: EligibilityResult;
 	score: number;
 	classification: SetupClassification;

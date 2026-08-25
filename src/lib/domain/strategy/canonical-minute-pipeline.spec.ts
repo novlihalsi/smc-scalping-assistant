@@ -34,6 +34,7 @@ describe('canonical 1m orchestration', () => {
 		expect(publicStrategy).toHaveProperty('processCanonicalMinute');
 		expect(publicStrategy).not.toHaveProperty('processSmcClosedCandle');
 		expect(publicStrategy).not.toHaveProperty('createSmcClosedCandleState');
+		expect(publicStrategy).not.toHaveProperty('processStrategySignal');
 	});
 
 	it('derives exact 5m OHLCV and processes it before the same-close 1m candle', () => {

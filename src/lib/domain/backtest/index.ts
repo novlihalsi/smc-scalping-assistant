@@ -38,6 +38,7 @@ export type {
 	CensoredOpenBacktestTrade,
 	ClosedCandlePipeline,
 	ClosedCandlePipelineResult,
+	EndOfRangeTerminalization,
 	ExpiredPendingBacktestTrade,
 	OpenBacktestTrade,
 	PendingBacktestTrade,
@@ -51,5 +52,15 @@ export type {
 	CanonicalReplayObservation,
 	CanonicalReplayParityComparison,
 	CanonicalReplayParityResult,
+	RealtimeParityDeliveryOptions,
 	RunCanonicalReplayParityOptions
 } from './parity-harness.js';
+export {
+	InMemoryRealtimeIngestionAdapter,
+	RealtimeIngestionError
+} from './realtime-ingestion-adapter.js';
+export type {
+	InMemoryRealtimeIngestionOptions,
+	RealtimeIngestionErrorCode,
+	RealtimeIngestionSnapshot
+} from './realtime-ingestion-adapter.js';

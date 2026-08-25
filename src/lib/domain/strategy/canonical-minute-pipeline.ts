@@ -10,8 +10,12 @@ import type { SMCStrategyConfig, TradingSetup } from './models.js';
 import {
 	createSmcClosedCandleState,
 	processSmcClosedCandle,
-	type SMCClosedCandlePipelineState
+	terminalizeSmcSetupsAtEndOfRange,
+	type SMCClosedCandlePipelineState,
+	type SMCSetupEndOfRangeTerminalization
 } from './candle-pipeline.js';
+
+export type CanonicalMinuteEndOfRangeTerminalization = SMCSetupEndOfRangeTerminalization;
 
 export type CanonicalMinutePipelineErrorCode =
 	| 'INVALID_TIMEFRAME'
@@ -53,7 +57,11 @@ export function createCanonicalMinutePipeline(config: SMCStrategyConfig) {
 			state: CanonicalMinutePipelineState,
 			candle: Candle,
 			processingConfig: SMCStrategyConfig
-		) => processCanonicalMinute(state, candle, processingConfig)
+		) => processCanonicalMinute(state, candle, processingConfig),
+		terminalizeEndOfRange: (
+			state: CanonicalMinutePipelineState,
+			terminalization: CanonicalMinuteEndOfRangeTerminalization
+		) => terminalizeCanonicalMinuteAtEndOfRange(state, terminalization)
 	};
 }
 
@@ -122,6 +130,17 @@ export function processCanonicalMinute(
 		},
 		setups,
 		processedCandles
+	};
+}
+
+export function terminalizeCanonicalMinuteAtEndOfRange(
+	state: CanonicalMinutePipelineState,
+	terminalization: CanonicalMinuteEndOfRangeTerminalization
+): { state: CanonicalMinutePipelineState; setups: readonly TradingSetup[] } {
+	const result = terminalizeSmcSetupsAtEndOfRange(state.pipeline, terminalization);
+	return {
+		state: result.state === state.pipeline ? state : { ...state, pipeline: result.state },
+		setups: result.setups
 	};
 }
 

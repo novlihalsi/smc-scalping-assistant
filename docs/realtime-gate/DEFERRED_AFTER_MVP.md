@@ -1,6 +1,7 @@
 # Deferred After MVP
 
 Track separately:
+
 - score-quality formula refinement;
 - session scoring;
 - volatility-regime reporting;

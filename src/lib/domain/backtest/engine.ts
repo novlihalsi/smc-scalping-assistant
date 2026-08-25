@@ -28,12 +28,22 @@ export interface ClosedCandlePipelineResult<State> {
 	setups: readonly TradingSetup[];
 }
 
+export interface EndOfRangeTerminalization {
+	timestamp: number;
+	expiredPendingSetupIds: readonly string[];
+	openSetupIds: readonly string[];
+}
+
 export interface ClosedCandlePipeline<State> {
 	createInitialState(): State;
 	processClosedCandle(
 		state: State,
 		candle: Candle,
 		config: SMCStrategyConfig
+	): ClosedCandlePipelineResult<State>;
+	terminalizeEndOfRange?(
+		state: State,
+		terminalization: EndOfRangeTerminalization
 	): ClosedCandlePipelineResult<State>;
 }
 
@@ -181,6 +191,24 @@ export function runBacktest<State>(options: RunBacktestOptions<State>): Backtest
 	const censoredOpenTrades = [...openTrades.values()]
 		.filter(({ entryTimestamp }) => entryTimestamp >= options.input.startDate)
 		.map((trade) => toCensoredOpenTrade(trade, rangeEndTimestamp));
+	const endOfRangeSetupIds = {
+		expiredPendingSetupIds: [...pendingTrades.keys()],
+		openSetupIds: [...openTrades.keys()]
+	};
+	if (
+		options.pipeline.terminalizeEndOfRange &&
+		(endOfRangeSetupIds.expiredPendingSetupIds.length > 0 ||
+			endOfRangeSetupIds.openSetupIds.length > 0)
+	) {
+		const terminalResult = options.pipeline.terminalizeEndOfRange(domainState, {
+			timestamp: rangeEndTimestamp,
+			...endOfRangeSetupIds
+		});
+		validatePipelineResult(terminalResult);
+		validateEndOfRangeSetups(terminalResult.setups, endOfRangeSetupIds, rangeEndTimestamp);
+		domainState = terminalResult.state;
+		setupEvents.push(...terminalResult.setups.map(cloneSetup));
+	}
 	pendingTrades.clear();
 	openTrades.clear();
 
@@ -197,6 +225,33 @@ export function runBacktest<State>(options: RunBacktestOptions<State>): Backtest
 		preRollTradesExcluded: allTrades.length - trades.length + preRollOpenTradesExcluded,
 		executionConfig: { ...executionConfig }
 	};
+}
+
+function validateEndOfRangeSetups(
+	setups: readonly TradingSetup[],
+	expected: Pick<EndOfRangeTerminalization, 'expiredPendingSetupIds' | 'openSetupIds'>,
+	timestamp: number
+): void {
+	const expectedStatuses = new Map<string, TradingSetup['status']>([
+		...expected.expiredPendingSetupIds.map((id) => [id, 'EXPIRED_END_OF_RANGE'] as const),
+		...expected.openSetupIds.map((id) => [id, 'OPEN_END_OF_RANGE'] as const)
+	]);
+	for (const setup of setups) {
+		const expectedStatus = expectedStatuses.get(setup.id);
+		if (expectedStatus !== setup.status || setup.updatedAt !== timestamp) {
+			throw new BacktestError(
+				'INVALID_PIPELINE_RESULT',
+				`Pipeline returned invalid end-of-range state for setup ${setup.id}.`
+			);
+		}
+		expectedStatuses.delete(setup.id);
+	}
+	if (expectedStatuses.size > 0) {
+		throw new BacktestError(
+			'INVALID_PIPELINE_RESULT',
+			`Pipeline did not terminalize setup ${[...expectedStatuses.keys()].sort()[0]}.`
+		);
+	}
 }
 
 function cloneSetup(setup: TradingSetup): TradingSetup {
@@ -394,7 +449,13 @@ function reconcileSetups(
 		}
 		seenThisCandle.add(setup.id);
 
-		if (setup.status === 'INVALIDATED' || setup.status === 'TP' || setup.status === 'SL') {
+		if (
+			setup.status === 'INVALIDATED' ||
+			setup.status === 'TP' ||
+			setup.status === 'SL' ||
+			setup.status === 'EXPIRED_END_OF_RANGE' ||
+			setup.status === 'OPEN_END_OF_RANGE'
+		) {
 			pendingTrades.delete(setup.id);
 			continue;
 		}

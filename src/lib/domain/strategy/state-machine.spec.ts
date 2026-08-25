@@ -74,27 +74,6 @@ function signals(direction: 'LONG' | 'SHORT'): StrategySignal[] {
 				causalStructureBreakId: 'choch',
 				causalDisplacementId: 'displacement'
 			}
-		},
-		{
-			type: 'RETRACEMENT',
-			id: 'retracement',
-			timestamp: 6,
-			timeframe: '1m',
-			fvg: {
-				id: 'fvg',
-				type: marketDirection,
-				createdAt: 5,
-				sourceCandleTimestamps: [3, 4, 5],
-				bottom: 100,
-				top: 102,
-				midpoint: 101,
-				state: 'PARTIALLY_FILLED',
-				lastUpdatedAt: 6,
-				causalSequenceId: 'sequence',
-				causalStructureBreakId: 'choch',
-				causalDisplacementId: 'displacement'
-			},
-			price: 101
 		}
 	];
 }
@@ -107,42 +86,29 @@ function replay(source: readonly StrategySignal[]) {
 }
 
 describe('SMC strategy state machine', () => {
-	it.each(['LONG', 'SHORT'] as const)('reaches READY for the ordered %s sequence', (direction) => {
-		let state = createStrategyState();
-		const transitions = signals(direction).map((signal) => {
-			const result = processStrategySignal(state, signal);
-			state = result.state;
-			return result.transition;
-		});
-		expect(state.stage).toBe('READY');
-		expect(state.direction).toBe(direction);
-		expect(state.sourceEventIds).toEqual([
-			'bias',
-			'sweep',
-			'choch',
-			'displacement',
-			'fvg-signal',
-			'retracement'
-		]);
-		expect(transitions.every(Boolean)).toBe(true);
-	});
-
-	it('keeps only FVG provenance and rejects a retracement against its latest FILLED state', () => {
-		const source = signals('LONG');
-		const waiting = replay(source.slice(0, 5));
-		const retracement = source[5] as Extract<StrategySignal, { type: 'RETRACEMENT' }>;
-
-		expect(waiting.activeFvgId).toBe('fvg');
-		expect(waiting).not.toHaveProperty('activeFvg');
-
-		const result = processStrategySignal(waiting, {
-			...retracement,
-			fvg: { ...retracement.fvg, state: 'FILLED' }
-		});
-
-		expect(result.state.stage).toBe('WAITING_FOR_RETRACEMENT');
-		expect(result.transition).toBeNull();
-	});
+	it.each(['LONG', 'SHORT'] as const)(
+		'reaches canonical FVG-ID waiting state for the ordered %s sequence',
+		(direction) => {
+			let state = createStrategyState();
+			const transitions = signals(direction).map((signal) => {
+				const result = processStrategySignal(state, signal);
+				state = result.state;
+				return result.transition;
+			});
+			expect(state.stage).toBe('WAITING_FOR_RETRACEMENT');
+			expect(state.direction).toBe(direction);
+			expect(state.activeFvgId).toBe('fvg');
+			expect(state).not.toHaveProperty('activeFvg');
+			expect(state.sourceEventIds).toEqual([
+				'bias',
+				'sweep',
+				'choch',
+				'displacement',
+				'fvg-signal'
+			]);
+			expect(transitions.every(Boolean)).toBe(true);
+		}
+	);
 
 	it('does not advance on an out-of-order sequence event', () => {
 		const source = signals('LONG');
@@ -172,7 +138,7 @@ describe('SMC strategy state machine', () => {
 				timestamp: 4
 			}
 		} as StrategySignal;
-		const state = replay([source[0]!, earlyDisplacement, sweep, choch, source[4]!, source[5]!]);
+		const state = replay([source[0]!, earlyDisplacement, sweep, choch, source[4]!]);
 		expect(state.stage).toBe('WAITING_FOR_DISPLACEMENT');
 		expect(state.sourceEventIds).toEqual(['bias', 'sweep', 'choch']);
 	});
