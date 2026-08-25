@@ -1,3 +1,5 @@
+export { detectConfirmedSwings } from './swing-engine.js';
+export type { SwingDetectionConfig } from './swing-engine.js';
 export type {
 	FairValueGap,
 	LiquidityLevel,
