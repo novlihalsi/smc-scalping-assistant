@@ -1,0 +1,19 @@
+# Manifest
+
+- `AUDIT_DECISIONS.md`
+- `AUDIT_FIX_INDEX.md`
+- `CODEX_FIX_PROMPT_TEMPLATE.md`
+- `CODEX_REMEDIATION_MASTER_PROMPT.md`
+- `FINAL_REAUDIT_PROMPT.md`
+- `README.md`
+- `REGRESSION_TEST_SPEC.md`
+- `REMEDIATION_ARCHITECTURE.md`
+- `audit-fixes/AUDIT-FIX-001.md`
+- `audit-fixes/AUDIT-FIX-002.md`
+- `audit-fixes/AUDIT-FIX-003.md`
+- `audit-fixes/AUDIT-FIX-004.md`
+- `audit-fixes/AUDIT-FIX-005.md`
+- `audit-fixes/AUDIT-FIX-006.md`
+- `audit-fixes/AUDIT-FIX-007.md`
+- `audit-fixes/AUDIT-FIX-008.md`
+- `audit-fixes/AUDIT-FIX-009.md`
