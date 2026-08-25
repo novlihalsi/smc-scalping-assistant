@@ -19,19 +19,102 @@ export type {
 	IncompleteFiveMinuteBucket,
 	Timeframe
 } from './market/index.js';
-export type { SetupReason } from './scoring/index.js';
-export { detectConfirmedSwings } from './smc/index.js';
+export { calculateRiskPlan, RiskCalculationError } from './risk/index.js';
+export type { RiskCalculationInput, RiskConfig, RiskErrorCode, RiskPlan } from './risk/index.js';
+export { classifySetupScore, scoreSetup } from './scoring/index.js';
 export type {
+	SetupClassification,
+	SetupReason,
+	SetupScoreResult,
+	SetupScoringInput
+} from './scoring/index.js';
+export {
+	AtrError,
+	BosError,
+	calculateTrueRange,
+	calculateDealingRange,
+	ChochError,
+	classifyPremiumDiscount,
+	createAtrState,
+	createBosState,
+	createChochState,
+	createFvgState,
+	createLiquidityState,
+	createMarketStructureState,
+	createOrderBlockState,
+	detectConfirmedSwings,
+	detectDisplacement,
+	DisplacementError,
+	FvgError,
+	LiquidityDetectionError,
+	LiquiditySweepError,
+	MarketStructureError,
+	OrderBlockError,
+	PremiumDiscountError,
+	processBosCandle,
+	processAtrCandle,
+	processChochCandle,
+	processConfirmedSwing,
+	processFvgCandle,
+	processLiquiditySwing,
+	processLiquiditySweepCandle,
+	processOrderBlockCandle
+} from './smc/index.js';
+export type {
+	AtrConfig,
+	AtrProcessingResult,
+	AtrState,
+	AtrValue,
+	BosProcessingResult,
+	BosState,
+	ChochProcessingResult,
+	ChochState,
+	DealingRange,
+	DisplacementConfig,
+	DisplacementEvent,
 	FairValueGap,
+	FvgProcessingResult,
+	FvgState,
+	LiquidityDetectionConfig,
+	LiquidityInteraction,
+	LiquidityInteractionType,
 	LiquidityLevel,
+	LiquidityProcessingResult,
 	LiquiditySweep,
+	LiquiditySweepProcessingResult,
+	LiquidityState,
 	MarketBias,
+	MarketStructureState,
 	MarketStructurePoint,
 	OrderBlock,
+	OrderBlockProcessingResult,
+	OrderBlockState,
+	PremiumDiscountZone,
 	StructureBreak,
 	StructureType,
 	SwingDetectionConfig,
 	SwingPoint
 } from './smc/index.js';
-export { DEFAULT_SMC_STRATEGY_CONFIG } from './strategy/index.js';
-export type { SMCStrategyConfig, TradingSetup } from './strategy/index.js';
+export {
+	createStrategyState,
+	DEFAULT_SMC_STRATEGY_CONFIG,
+	processStrategySignal,
+	StrategyStateError
+} from './strategy/index.js';
+export type {
+	ChochSignal,
+	DisplacementSignal,
+	FvgSignal,
+	HtfBiasSignal,
+	InvalidationSignal,
+	LiquiditySweepSignal,
+	RetracementSignal,
+	SMCStrategyConfig,
+	StrategyDirection,
+	StrategyProcessingResult,
+	StrategySignal,
+	StrategyStage,
+	StrategyState,
+	StrategyTransition,
+	TradingSetup
+} from './strategy/index.js';
