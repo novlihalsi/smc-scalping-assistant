@@ -138,7 +138,10 @@ const tradingSetup: TradingSetup = {
 		orderBlockId: null,
 		sweepId: liquiditySweep.id,
 		structureBreakId: structureBreak.id,
-		displacementId: 'displacement-1'
+		displacementId: 'displacement-1',
+		protectedSwingId: 'protected-hl',
+		protectedSwingPrice: 98,
+		protectedBosId: 'protecting-bos-1'
 	},
 	pendingEntryBars: 0
 };

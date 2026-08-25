@@ -65,7 +65,10 @@ function setup(timestamp: number, overrides: Partial<TradingSetup> = {}): Tradin
 			orderBlockId: null,
 			sweepId: 'sweep-1',
 			structureBreakId: 'choch-1',
-			displacementId: 'displacement-1'
+			displacementId: 'displacement-1',
+			protectedSwingId: 'protected-hl',
+			protectedSwingPrice: 90,
+			protectedBosId: 'protecting-bos-1'
 		},
 		pendingEntryBars: 0,
 		...overrides

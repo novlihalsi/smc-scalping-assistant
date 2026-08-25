@@ -147,11 +147,24 @@ export function processSmcClosedCandle(
 		if (biasResult.transition) sequence = emptySequence();
 
 		const activeSetup = resolveSetup(setupRegistry, activeSetupId);
-		if (activeSetup && !isBiasAligned(activeSetup, htfBias)) {
-			const invalidated = invalidateSetup(activeSetup, candle.closeTimestamp, 'HTF_BIAS_REVERSED');
+		const structuralInvalidation = activeSetup
+			? getProtectedStructureInvalidation(
+					activeSetup.direction,
+					activeSetup.dependencies.protectedSwingPrice,
+					candle.close
+				)
+			: null;
+		if (activeSetup && (structuralInvalidation || !isBiasAligned(activeSetup, htfBias))) {
+			const invalidated = invalidateSetup(
+				activeSetup,
+				candle.closeTimestamp,
+				structuralInvalidation ?? 'HTF_BIAS_REVERSED'
+			);
 			setupRegistry = upsertSetup(setupRegistry, invalidated);
 			activeSetupId = null;
 			setups.push(invalidated);
+			strategy = restartStrategy(htfBias, candle);
+			sequence = emptySequence();
 		}
 	} else {
 		const activeSetup = resolveSetup(setupRegistry, activeSetupId);
@@ -183,6 +196,7 @@ export function processSmcClosedCandle(
 					strategy,
 					sequence,
 					timeframeResult.state,
+					timeframes[config.biasTimeframe],
 					htfBias,
 					candle,
 					config
@@ -353,6 +367,7 @@ function createTradingSetup(
 	strategy: StrategyState,
 	sequence: SMCSequenceContext,
 	entryState: SMCClosedCandleTimeframeState,
+	biasState: SMCClosedCandleTimeframeState,
 	htfBias: MarketBias,
 	candle: Candle,
 	config: SMCStrategyConfig
@@ -368,6 +383,14 @@ function createTradingSetup(
 	) {
 		return null;
 	}
+	const expectedDirection = strategy.direction === 'LONG' ? 'BULLISH' : 'BEARISH';
+	const protectedSwing =
+		expectedDirection === 'BULLISH' ? biasState.bos.protectedLow : biasState.bos.protectedHigh;
+	if (!protectedSwing) return null;
+	if (getProtectedStructureInvalidation(strategy.direction, protectedSwing.price, candle.close)) {
+		return null;
+	}
+
 	const orderBlock = findRelevantOrderBlock(entryState.orderBlocks.blocks, strategy.direction);
 	let riskPlan: RiskPlan;
 	try {
@@ -391,15 +414,10 @@ function createTradingSetup(
 		throw error;
 	}
 
-	const { lastHigh, lastLow } = entryState.marketStructure;
-	const range =
-		lastHigh && lastLow && lastHigh.price > lastLow.price
-			? calculateDealingRange(entryState.marketStructure)
-			: null;
+	const range = calculateDealingRange(biasState.bos, expectedDirection);
 	const premiumDiscount = range
 		? classifyPremiumDiscount(riskPlan.entryPrice, range)
 		: 'EQUILIBRIUM';
-	const expectedDirection = strategy.direction === 'LONG' ? 'BULLISH' : 'BEARISH';
 	const eligibility = evaluateSetupEligibility({
 		alignedHtfBias: htfBias === expectedDirection,
 		liquiditySweep:
@@ -456,7 +474,10 @@ function createTradingSetup(
 			orderBlockId: riskPlan.entryZoneSource === 'FVG_OB_OVERLAP' ? (orderBlock?.id ?? null) : null,
 			sweepId: sequence.sweep.id,
 			structureBreakId: sequence.choch.id,
-			displacementId: sequence.displacement.id
+			displacementId: sequence.displacement.id,
+			protectedSwingId: protectedSwing.swingId,
+			protectedSwingPrice: protectedSwing.price,
+			protectedBosId: protectedSwing.causalBosId
 		},
 		pendingEntryBars: 0
 	};
@@ -490,6 +511,16 @@ function processPendingSetup(
 ): { setup: TradingSetup; event: TradingSetup | null } {
 	if (!isBiasAligned(setup, htfBias)) {
 		const invalidated = invalidateSetup(setup, candle.closeTimestamp, 'HTF_BIAS_REVERSED');
+		return { setup: invalidated, event: invalidated };
+	}
+
+	const structuralInvalidation = getProtectedStructureInvalidation(
+		setup.direction,
+		setup.dependencies.protectedSwingPrice,
+		candle.close
+	);
+	if (structuralInvalidation) {
+		const invalidated = invalidateSetup(setup, candle.closeTimestamp, structuralInvalidation);
 		return { setup: invalidated, event: invalidated };
 	}
 
@@ -544,6 +575,20 @@ function isBiasAligned(setup: TradingSetup, bias: MarketBias): boolean {
 		(setup.direction === 'LONG' && bias === 'BULLISH') ||
 		(setup.direction === 'SHORT' && bias === 'BEARISH')
 	);
+}
+
+function getProtectedStructureInvalidation(
+	direction: TradingSetup['direction'],
+	protectedSwingPrice: number,
+	closePrice: number
+): 'PROTECTED_LOW_BREACHED' | 'PROTECTED_HIGH_BREACHED' | null {
+	if (direction === 'LONG' && closePrice < protectedSwingPrice) {
+		return 'PROTECTED_LOW_BREACHED';
+	}
+	if (direction === 'SHORT' && closePrice > protectedSwingPrice) {
+		return 'PROTECTED_HIGH_BREACHED';
+	}
+	return null;
 }
 
 function resolveFvg(gaps: readonly FairValueGap[], id: string | null): FairValueGap | null {

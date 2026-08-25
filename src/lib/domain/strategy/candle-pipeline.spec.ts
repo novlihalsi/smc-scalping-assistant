@@ -65,6 +65,30 @@ function stateWaitingForGapRetracement(config = lifecycleConfig): {
 		gap,
 		state: {
 			...state,
+			timeframes: {
+				...state.timeframes,
+				'5m': {
+					...state.timeframes['5m'],
+					bos: {
+						...state.timeframes['5m'].bos,
+						symbol: 'BTCUSDT',
+						timeframe: '5m',
+						protectedLow: {
+							swingId: 'protected-hl',
+							price: 100,
+							confirmedAt: 59_999,
+							establishedAt: 119_999,
+							causalBosId: 'protecting-bos'
+						},
+						bullishExpansionHigh: {
+							price: 114,
+							timestamp: 179_999,
+							causalBosId: 'protecting-bos'
+						},
+						lastProcessedTimestamp: 179_999
+					}
+				}
+			},
 			htfBias: 'BULLISH',
 			strategy: {
 				...createStrategyState(),
@@ -138,7 +162,10 @@ function withPendingSetup(
 			orderBlockId: null,
 			sweepId: 'sweep',
 			structureBreakId: 'choch',
-			displacementId: 'displacement'
+			displacementId: 'displacement',
+			protectedSwingId: 'protected-hl',
+			protectedSwingPrice: 100,
+			protectedBosId: 'protecting-bos'
 		},
 		pendingEntryBars: 0,
 		...overrides
@@ -328,7 +355,12 @@ describe('shared closed-candle SMC pipeline', () => {
 			entryZone: { min: gap.bottom, max: gap.top },
 			entryPrice: gap.top,
 			pendingEntryBars: 0,
-			dependencies: { fvgId: gap.id }
+			dependencies: {
+				fvgId: gap.id,
+				protectedSwingId: 'protected-hl',
+				protectedSwingPrice: 100,
+				protectedBosId: 'protecting-bos'
+			}
 		});
 		expect(valid.state.activeSetupId).toBe(setup?.id);
 		expect(setup?.sourceEventIds).toContain(gap.id);
@@ -352,6 +384,58 @@ describe('shared closed-candle SMC pipeline', () => {
 		const result = processSmcClosedCandle(
 			{ ...state, htfBias: 'BEARISH' },
 			oneMinuteCandle(3, { open: 110, high: 111, low: 108, close: 109 }),
+			lifecycleConfig
+		);
+
+		expect(result.setups).toEqual([]);
+		expect(result.state.setupRegistry).toEqual([]);
+	});
+
+	it('does not create a setup without protected structure established by a causal BOS', () => {
+		const { state } = stateWaitingForGapRetracement();
+		const result = processSmcClosedCandle(
+			{
+				...state,
+				timeframes: {
+					...state.timeframes,
+					'5m': {
+						...state.timeframes['5m'],
+						bos: {
+							...state.timeframes['5m'].bos,
+							protectedLow: null,
+							bullishExpansionHigh: null
+						}
+					}
+				}
+			},
+			oneMinuteCandle(3, { open: 110, high: 111, low: 108, close: 109 }),
+			lifecycleConfig
+		);
+
+		expect(result.setups).toEqual([]);
+		expect(result.state.setupRegistry).toEqual([]);
+	});
+
+	it('does not create a LONG setup on a candle that closes below its protected low', () => {
+		const { state } = stateWaitingForGapRetracement();
+		const result = processSmcClosedCandle(
+			{
+				...state,
+				timeframes: {
+					...state.timeframes,
+					'5m': {
+						...state.timeframes['5m'],
+						bos: {
+							...state.timeframes['5m'].bos,
+							protectedLow: {
+								...state.timeframes['5m'].bos.protectedLow!,
+								price: 109
+							}
+						}
+					}
+				}
+			},
+			oneMinuteCandle(3, { open: 110, high: 111, low: 108, close: 108.5 }),
 			lifecycleConfig
 		);
 
@@ -411,6 +495,41 @@ describe('shared closed-candle SMC pipeline', () => {
 		expect(result.state.activeSetupId).toBeNull();
 	});
 
+	it('terminalizes a pending setup when the derived close breaches its protected low', () => {
+		const fixture = stateWaitingForGapRetracement();
+		const pending = withPendingSetup(fixture.state, fixture.gap);
+		const state = {
+			...pending,
+			timeframes: {
+				...pending.timeframes,
+				'5m': {
+					...pending.timeframes['5m'],
+					marketStructure: {
+						...pending.timeframes['5m'].marketStructure,
+						bias: 'BULLISH' as const
+					}
+				}
+			}
+		};
+		const result = processSmcClosedCandle(
+			state,
+			{
+				...candle(0, '5m', 102),
+				open: 101,
+				low: 98,
+				close: 99
+			},
+			lifecycleConfig
+		);
+
+		expect(result.setups[0]).toMatchObject({
+			status: 'INVALIDATED',
+			invalidationReason: 'PROTECTED_LOW_BREACHED'
+		});
+		expect(result.state.activeSetupId).toBeNull();
+		expect(result.state.strategy.stage).toBe('WAITING_FOR_SWEEP');
+	});
+
 	it('invalidates a pending setup when its canonical FVG becomes FILLED', () => {
 		const fixture = stateWaitingForGapRetracement();
 		const state = withPendingSetup(fixture.state, fixture.gap);
@@ -425,6 +544,45 @@ describe('shared closed-candle SMC pipeline', () => {
 			invalidationReason: 'DEPENDENT_FVG_FILLED'
 		});
 		expect(result.state.activeSetupId).toBeNull();
+	});
+
+	it('invalidates LONG and SHORT pending setups on a close beyond their protected swing', () => {
+		const fixture = stateWaitingForGapRetracement();
+		const longState = withPendingSetup(fixture.state, fixture.gap);
+		const longResult = processSmcClosedCandle(
+			longState,
+			oneMinuteCandle(3, { open: 101, high: 102, low: 98, close: 99 }),
+			lifecycleConfig
+		);
+		expect(longResult.setups[0]).toMatchObject({
+			status: 'INVALIDATED',
+			invalidationReason: 'PROTECTED_LOW_BREACHED'
+		});
+
+		const shortState = withPendingSetup(fixture.state, fixture.gap, {
+			direction: 'SHORT',
+			stopLoss: 125,
+			takeProfit: 90,
+			dependencies: {
+				fvgId: fixture.gap.id,
+				orderBlockId: null,
+				sweepId: 'sweep',
+				structureBreakId: 'choch',
+				displacementId: 'displacement',
+				protectedSwingId: 'protected-lh',
+				protectedSwingPrice: 120,
+				protectedBosId: 'bearish-protecting-bos'
+			}
+		});
+		const shortResult = processSmcClosedCandle(
+			{ ...shortState, htfBias: 'BEARISH' },
+			oneMinuteCandle(3, { open: 119, high: 122, low: 118, close: 121 }),
+			lifecycleConfig
+		);
+		expect(shortResult.setups[0]).toMatchObject({
+			status: 'INVALIDATED',
+			invalidationReason: 'PROTECTED_HIGH_BREACHED'
+		});
 	});
 
 	it('invalidates a pending setup when its required Order Block is invalidated', () => {
@@ -448,7 +606,10 @@ describe('shared closed-candle SMC pipeline', () => {
 				orderBlockId: block.id,
 				sweepId: 'sweep',
 				structureBreakId: 'choch',
-				displacementId: 'displacement'
+				displacementId: 'displacement',
+				protectedSwingId: 'protected-hl',
+				protectedSwingPrice: 100,
+				protectedBosId: 'protecting-bos'
 			}
 		});
 		state = {

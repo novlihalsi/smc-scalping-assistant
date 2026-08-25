@@ -17,7 +17,12 @@ export {
 } from './premium-discount-engine.js';
 export type { DealingRange, PremiumDiscountZone } from './premium-discount-engine.js';
 export { BosError, createBosState, processBosCandle } from './bos-engine.js';
-export type { BosProcessingResult, BosState } from './bos-engine.js';
+export type {
+	BosProcessingResult,
+	BosState,
+	ExpansionExtremeState,
+	ProtectedSwingState
+} from './bos-engine.js';
 export { ChochError, createChochState, processChochCandle } from './choch-engine.js';
 export type { ChochProcessingResult, ChochState } from './choch-engine.js';
 export {

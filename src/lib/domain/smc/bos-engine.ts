@@ -6,7 +6,25 @@ export interface BosState {
 	symbol: string | null;
 	timeframe: Timeframe | null;
 	consumedSwingIds: readonly string[];
+	protectedHigh: ProtectedSwingState | null;
+	protectedLow: ProtectedSwingState | null;
+	bullishExpansionHigh: ExpansionExtremeState | null;
+	bearishExpansionLow: ExpansionExtremeState | null;
 	lastProcessedTimestamp: number | null;
+}
+
+export interface ProtectedSwingState {
+	swingId: string;
+	price: number;
+	confirmedAt: number;
+	establishedAt: number;
+	causalBosId: string;
+}
+
+export interface ExpansionExtremeState {
+	price: number;
+	timestamp: number;
+	causalBosId: string;
 }
 
 export interface BosProcessingResult {
@@ -26,6 +44,10 @@ export function createBosState(): BosState {
 		symbol: null,
 		timeframe: null,
 		consumedSwingIds: [],
+		protectedHigh: null,
+		protectedLow: null,
+		bullishExpansionHigh: null,
+		bearishExpansionLow: null,
 		lastProcessedTimestamp: null
 	};
 }
@@ -43,12 +65,20 @@ export function processBosCandle(
 	assertCompatibleInput(state, candle, marketStructure);
 
 	const relevantLevel = findRelevantLevel(marketStructure);
-	const nextBaseState: BosState = {
-		symbol: state.symbol ?? candle.symbol,
-		timeframe: state.timeframe ?? candle.timeframe,
-		consumedSwingIds: state.consumedSwingIds,
-		lastProcessedTimestamp: candle.closeTimestamp
-	};
+	const nextBaseState = updateExpansionExtreme(
+		{
+			symbol: state.symbol ?? candle.symbol,
+			timeframe: state.timeframe ?? candle.timeframe,
+			consumedSwingIds: state.consumedSwingIds,
+			protectedHigh: state.protectedHigh,
+			protectedLow: state.protectedLow,
+			bullishExpansionHigh: state.bullishExpansionHigh,
+			bearishExpansionLow: state.bearishExpansionLow,
+			lastProcessedTimestamp: candle.closeTimestamp
+		},
+		candle,
+		marketStructure.bias
+	);
 
 	if (
 		!relevantLevel ||
@@ -80,13 +110,118 @@ export function processBosCandle(
 		brokenLevel: relevantLevel.price,
 		closePrice: candle.close
 	};
+	const protectedSwing = findProtectedSwing(marketStructure, direction);
 
 	return {
-		state: {
-			...nextBaseState,
-			consumedSwingIds: [...state.consumedSwingIds, relevantLevel.swingId]
-		},
+		state: protectedSwing
+			? establishProtectedStructure(nextBaseState, protectedSwing, structureBreak, candle)
+			: {
+					...nextBaseState,
+					consumedSwingIds: [...state.consumedSwingIds, relevantLevel.swingId]
+				},
 		structureBreak
+	};
+}
+
+function findProtectedSwing(
+	marketStructure: MarketStructureState,
+	direction: StructureBreak['direction']
+): MarketStructurePoint | null {
+	const protectedStructure = direction === 'BULLISH' ? 'HL' : 'LH';
+
+	for (let index = marketStructure.sequence.length - 1; index >= 0; index -= 1) {
+		const point = marketStructure.sequence[index];
+		if (point?.structure === protectedStructure) return point;
+	}
+
+	return null;
+}
+
+function updateExpansionExtreme(
+	state: BosState,
+	candle: Candle,
+	bias: MarketStructureState['bias']
+): BosState {
+	if (bias === 'BULLISH' && state.protectedLow && state.bullishExpansionHigh) {
+		return candle.high > state.bullishExpansionHigh.price
+			? {
+					...state,
+					bullishExpansionHigh: {
+						price: candle.high,
+						timestamp: candle.closeTimestamp,
+						causalBosId: state.protectedLow.causalBosId
+					}
+				}
+			: state;
+	}
+
+	if (bias === 'BEARISH' && state.protectedHigh && state.bearishExpansionLow) {
+		return candle.low < state.bearishExpansionLow.price
+			? {
+					...state,
+					bearishExpansionLow: {
+						price: candle.low,
+						timestamp: candle.closeTimestamp,
+						causalBosId: state.protectedHigh.causalBosId
+					}
+				}
+			: state;
+	}
+
+	return state;
+}
+
+function establishProtectedStructure(
+	state: BosState,
+	protectedSwing: MarketStructurePoint,
+	structureBreak: StructureBreak,
+	candle: Candle
+): BosState {
+	const consumedSwingIds = [...state.consumedSwingIds, structureBreak.brokenSwingId];
+	const protectedState: ProtectedSwingState = {
+		swingId: protectedSwing.swingId,
+		price: protectedSwing.price,
+		confirmedAt: protectedSwing.timestamp,
+		establishedAt: structureBreak.timestamp,
+		causalBosId: structureBreak.id
+	};
+
+	if (structureBreak.direction === 'BULLISH') {
+		const continuedExpansion =
+			state.protectedLow?.swingId === protectedSwing.swingId ? state.bullishExpansionHigh : null;
+		return {
+			...state,
+			consumedSwingIds,
+			protectedHigh: null,
+			protectedLow: protectedState,
+			bullishExpansionHigh: {
+				price: Math.max(continuedExpansion?.price ?? candle.high, candle.high),
+				timestamp:
+					continuedExpansion && continuedExpansion.price > candle.high
+						? continuedExpansion.timestamp
+						: candle.closeTimestamp,
+				causalBosId: structureBreak.id
+			},
+			bearishExpansionLow: null
+		};
+	}
+
+	const continuedExpansion =
+		state.protectedHigh?.swingId === protectedSwing.swingId ? state.bearishExpansionLow : null;
+	return {
+		...state,
+		consumedSwingIds,
+		protectedHigh: protectedState,
+		protectedLow: null,
+		bullishExpansionHigh: null,
+		bearishExpansionLow: {
+			price: Math.min(continuedExpansion?.price ?? candle.low, candle.low),
+			timestamp:
+				continuedExpansion && continuedExpansion.price < candle.low
+					? continuedExpansion.timestamp
+					: candle.closeTimestamp,
+			causalBosId: structureBreak.id
+		}
 	};
 }
 

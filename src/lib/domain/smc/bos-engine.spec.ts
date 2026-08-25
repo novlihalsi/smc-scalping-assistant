@@ -86,6 +86,36 @@ describe('BOS engine', () => {
 		});
 	});
 
+	it('protects the causal HL rather than an unclassified latest low and tracks expansion', () => {
+		const structure = processConfirmedSwing(
+			bullishStructure(),
+			swing('later-equal-low', 'LOW', 95, 6)
+		);
+		expect(structure.lastLow?.id).toBe('later-equal-low');
+
+		const broken = processBosCandle(
+			createBosState(),
+			candle(6, { open: 109, high: 113, low: 108, close: 111 }),
+			structure
+		);
+		const expanded = processBosCandle(
+			broken.state,
+			candle(7, { open: 111, high: 118, low: 110, close: 116 }),
+			structure
+		);
+
+		expect(broken.state.protectedLow).toMatchObject({
+			swingId: 'low-2',
+			price: 95,
+			causalBosId: broken.structureBreak?.id
+		});
+		expect(broken.state.protectedHigh).toBeNull();
+		expect(expanded.state.bullishExpansionHigh).toMatchObject({
+			price: 118,
+			timestamp: 2_399_999
+		});
+	});
+
 	it('emits bearish BOS only when a closed candle closes below the latest LL', () => {
 		const structure = bearishStructure();
 		const wickOnly = candle(5, { open: 92, high: 93, low: 88, close: 91 });
@@ -103,6 +133,12 @@ describe('BOS engine', () => {
 				closePrice: 89
 			})
 		);
+		expect(result.state.protectedHigh).toMatchObject({
+			swingId: 'high-2',
+			price: 105,
+			causalBosId: result.structureBreak?.id
+		});
+		expect(result.state.protectedLow).toBeNull();
 	});
 
 	it('does not emit the same structural level more than once', () => {

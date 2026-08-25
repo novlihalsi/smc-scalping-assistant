@@ -7,6 +7,9 @@ export interface SetupDependencies {
 	sweepId: string;
 	structureBreakId: string;
 	displacementId: string;
+	protectedSwingId: string;
+	protectedSwingPrice: number;
+	protectedBosId: string;
 }
 
 export interface TradingSetup {

@@ -113,7 +113,47 @@ function createSetupCheckpoint(
 		...pipeline,
 		htfBias: bias,
 		strategy,
-		sequence: { sweep, choch, displacement }
+		sequence: { sweep, choch, displacement },
+		timeframes: {
+			...pipeline.timeframes,
+			'5m': {
+				...pipeline.timeframes['5m'],
+				bos: {
+					...pipeline.timeframes['5m'].bos,
+					symbol: 'BTCUSDT',
+					timeframe: '5m',
+					protectedHigh:
+						direction === 'SHORT'
+							? {
+									swingId: 'protected-lh',
+									price: 120,
+									confirmedAt: 419_999,
+									establishedAt: 479_999,
+									causalBosId: 'protecting-bos'
+								}
+							: null,
+					protectedLow:
+						direction === 'LONG'
+							? {
+									swingId: 'protected-hl',
+									price: 90,
+									confirmedAt: 419_999,
+									establishedAt: 479_999,
+									causalBosId: 'protecting-bos'
+								}
+							: null,
+					bullishExpansionHigh:
+						direction === 'LONG'
+							? { price: 130, timestamp: 599_999, causalBosId: 'protecting-bos' }
+							: null,
+					bearishExpansionLow:
+						direction === 'SHORT'
+							? { price: 90, timestamp: 599_999, causalBosId: 'protecting-bos' }
+							: null,
+					lastProcessedTimestamp: 599_999
+				}
+			}
+		}
 	};
 	const state = createCanonicalMinutePipelineState(config);
 
